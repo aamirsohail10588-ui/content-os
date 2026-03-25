@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — Content OS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; display: flex; min-height: 100vh; }
+    .sidebar { width: 240px; background: #161b22; border-right: 1px solid #21262d; padding: 24px 16px; flex-shrink: 0; display: flex; flex-direction: column; }
+    .main { flex: 1; padding: 32px; overflow-y: auto; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; }
+    .nav-link { color: #8b949e; padding: 10px 14px; border-radius: 8px; text-decoration: none; display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; transition: all 0.2s; margin-bottom: 4px; }
+    .nav-link:hover, .nav-link.active { color: #e6edf3; background: #21262d; }
+    .input { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 12px 14px; border-radius: 8px; font-size: 15px; outline: none; }
+    .input:focus { border-color: #388bfd; }
+    .btn-green { background: #238636; color: #fff; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 15px; border: none; cursor: pointer; transition: background 0.2s; }
+    .btn-green:hover { background: #2ea043; }
+    .status-generating { color: #d29922; }
+    .status-generated { color: #58a6ff; }
+    .status-published { color: #3fb950; }
+    .status-failed { color: #f85149; }
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div style="font-size: 18px; font-weight: 700; margin-bottom: 32px; padding: 0 14px;">⚡ Content OS</div>
+    <nav style="flex: 1;">
+      <a href="/dashboard" class="nav-link active">📊 Dashboard</a>
+      <a href="/videos" class="nav-link">🎬 Videos</a>
+      <a href="/connect" class="nav-link">🔗 Connections</a>
+      <a href="/settings" class="nav-link">⚙️ Settings</a>
+    </nav>
+    <div style="border-top: 1px solid #21262d; padding-top: 16px; margin-top: 16px;">
+      <div style="font-size: 13px; color: #8b949e; padding: 0 14px; margin-bottom: 8px;"><%= user.name %></div>
+      <a href="/logout" class="nav-link" style="color: #f85149;">🚪 Sign Out</a>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <div style="margin-bottom: 32px;">
+      <h1 style="font-size: 26px; font-weight: 700; margin: 0 0 4px;">Dashboard</h1>
+      <p style="color: #8b949e; margin: 0;">Welcome back, <%= user.name %></p>
+    </div>
+
+    <!-- Stats -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px;">
+      <div class="card" style="text-align: center;">
+        <div style="font-size: 36px; font-weight: 700; color: #58a6ff;"><%= stats.total %></div>
+        <div style="color: #8b949e; font-size: 14px; margin-top: 4px;">Videos Generated</div>
+      </div>
+      <div class="card" style="text-align: center;">
+        <div style="font-size: 36px; font-weight: 700; color: #3fb950;"><%= stats.published %></div>
+        <div style="color: #8b949e; font-size: 14px; margin-top: 4px;">Published</div>
+      </div>
+      <div class="card" style="text-align: center;">
+        <div style="font-size: 36px; font-weight: 700; color: <%= youtube ? '#ff4444' : '#30363d' %>;">
+          <%= youtube ? '✓' : '✗' %>
+        </div>
+        <div style="color: #8b949e; font-size: 14px; margin-top: 4px;">YouTube</div>
+      </div>
+      <div class="card" style="text-align: center;">
+        <div style="font-size: 36px; font-weight: 700; color: <%= instagram ? '#e1306c' : '#30363d' %>;">
+          <%= instagram ? '✓' : '✗' %>
+        </div>
+        <div style="color: #8b949e; font-size: 14px; margin-top: 4px;">Instagram</div>
+      </div>
+    </div>
+
+    <!-- Generate -->
+    <div class="card" style="margin-bottom: 32px;">
+      <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px;">Generate New Video</h2>
+      <p style="color: #8b949e; font-size: 13px; margin: 0 0 16px;">Any topic — news, war, crypto, science, sports, finance, anything</p>
+      <% if (!youtube && !instagram) { %>
+        <div style="background: #2d2208; border: 1px solid #d29922; color: #d29922; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px;">
+          ⚠️ No platforms connected. <a href="/connect" style="color: #d29922; font-weight: 600;">Connect YouTube or Instagram</a> to auto-publish videos.
+        </div>
+      <% } %>
+      <div style="display: flex; gap: 12px; margin-bottom: 10px;">
+        <input class="input" type="text" id="topicInput" placeholder="e.g. Trump tariffs, Gaza war, Bitcoin crash, AI jobs, IPL 2026..." style="flex: 1;">
+      </div>
+      <div style="display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;">
+        <select id="langSelect" class="input" style="flex: 1; min-width: 140px; padding: 9px 12px; font-size: 13px;">
+          <option value="" selected>Language: from Settings (<%= user.voice_language || 'english' %>)</option>
+          <option value="english">English</option>
+          <option value="hinglish">Hinglish (Hindi+English)</option>
+          <option value="hindi">Hindi</option>
+        </select>
+        <select id="nicheSelect" class="input" style="flex: 1; min-width: 160px; padding: 9px 12px; font-size: 13px;">
+          <option value="" selected>Niche: auto-detect from topic</option>
+          <option value="finance">Finance & Money</option>
+          <option value="investing">Investing & Stocks</option>
+          <option value="geopolitics">Geopolitics & War</option>
+          <option value="crypto">Crypto & Web3</option>
+          <option value="technology">Technology & AI</option>
+          <option value="business">Business & Startups</option>
+          <option value="sports">Sports</option>
+          <option value="general">General / News</option>
+        </select>
+        <button class="btn-green" onclick="generateVideo()" style="white-space: nowrap;">Generate ▶</button>
+      </div>
+      <div id="generateStatus" style="margin-top: 4px; display: none;">
+        <div style="background: #0c2d6b; border: 1px solid #388bfd; color: #58a6ff; padding: 12px 16px; border-radius: 8px; font-size: 14px;">
+          ⏳ Researching topic + generating video... This takes 30–90 seconds. Page will update automatically.
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Videos -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 style="font-size: 18px; font-weight: 700; margin: 0;">Recent Videos</h2>
+        <a href="/videos" style="color: #58a6ff; font-size: 14px;">View all →</a>
+      </div>
+      <% if (videos.length === 0) { %>
+        <div style="text-align: center; padding: 40px; color: #8b949e;">
+          <div style="font-size: 48px; margin-bottom: 12px;">🎬</div>
+          <p>No videos yet. Generate your first one above!</p>
+        </div>
+      <% } else { %>
+        <div style="display: flex; flex-direction: column; gap: 12px;" id="videoList">
+          <% videos.slice(0, 5).forEach(v => { %>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: #0d1117; border-radius: 8px; border: 1px solid #21262d;" id="video-<%= v.id %>">
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><%= v.topic %></div>
+                <% if (v.hook) { %>
+                  <div style="color: #8b949e; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">"<%= v.hook %>"</div>
+                <% } else if (v.status === 'failed' && v.error_message) { %>
+                  <div style="color: #f85149; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="<%= v.error_message %>">⚠ <%= v.error_message.slice(0, 80) %></div>
+                <% } %>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; margin-left: 16px; flex-shrink: 0;">
+                <% if (v.duration) { %><span style="color: #8b949e; font-size: 13px;"><%= Math.round(v.duration) %>s</span><% } %>
+                <span class="status-<%= v.status %>" style="font-size: 13px; font-weight: 600; text-transform: capitalize;"><%= v.status %></span>
+                <% if (v.youtube_url) { %><a href="<%= v.youtube_url %>" target="_blank" style="color: #ff4444; font-size: 13px; font-weight: 600;">▶ YouTube</a><% } %>
+                <% if (v.instagram_url) { %><a href="<%= v.instagram_url %>" target="_blank" style="color: #e1306c; font-size: 13px; font-weight: 600;">📷 Reel</a><% } %>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <script>
+    async function generateVideo() {
+      const topic = document.getElementById('topicInput').value.trim();
+      if (!topic) { alert('Please enter a topic'); return; }
+
+      const lang = document.getElementById('langSelect').value || null;
+      const niche = document.getElementById('nicheSelect').value || null;
+
+      document.getElementById('generateStatus').style.display = 'block';
+      document.querySelector('.btn-green').disabled = true;
+
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic, language: lang, niche }),
+      });
+      const data = await res.json();
+      if (!data.success) { alert('Error: ' + data.error); return; }
+
+      // Poll for status
+      const poll = setInterval(async () => {
+        const r = await fetch('/api/video/' + data.videoId);
+        const d = await r.json();
+        if (d.video && (d.video.status === 'generated' || d.video.status === 'published' || d.video.status === 'failed')) {
+          clearInterval(poll);
+          document.getElementById('generateStatus').style.display = 'none';
+          document.querySelector('.btn-green').disabled = false;
+          document.getElementById('topicInput').value = '';
+          location.reload();
+        }
+      }, 3000);
+    }
+
+    document.getElementById('topicInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') generateVideo();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content OS — Autonomous Video Generation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; }
+    .gradient-text { background: linear-gradient(135deg, #58a6ff, #3fb950); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; }
+    .btn-primary { background: #238636; color: #fff; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; text-decoration: none; transition: background 0.2s; display: inline-block; }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-outline { border: 1px solid #30363d; color: #e6edf3; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; text-decoration: none; transition: all 0.2s; display: inline-block; }
+    .btn-outline:hover { background: #21262d; }
+  </style>
+</head>
+<body>
+  <!-- Nav -->
+  <nav style="border-bottom: 1px solid #21262d; padding: 16px 48px; display: flex; justify-content: space-between; align-items: center;">
+    <div style="font-size: 20px; font-weight: 700;">⚡ Content OS</div>
+    <div style="display: flex; gap: 16px;">
+      <a href="/login" class="btn-outline" style="padding: 8px 20px; font-size: 14px;">Sign In</a>
+      <a href="/register" class="btn-primary" style="padding: 8px 20px; font-size: 14px;">Get Started Free</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <div style="text-align: center; padding: 100px 24px 60px;">
+    <div style="display: inline-block; background: #1a4731; color: #3fb950; padding: 4px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 24px;">AI-Powered Content Generation</div>
+    <h1 style="font-size: 56px; font-weight: 800; line-height: 1.1; margin: 0 0 24px;">
+      Generate & Publish<br><span class="gradient-text">Finance Videos Automatically</span>
+    </h1>
+    <p style="font-size: 20px; color: #8b949e; max-width: 600px; margin: 0 auto 40px; line-height: 1.6;">
+      AI writes the script, generates the voice, assembles the video, and posts to YouTube & Instagram — fully automated.
+    </p>
+    <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+      <a href="/register" class="btn-primary">Start For Free →</a>
+      <a href="/login" class="btn-outline">Sign In</a>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <div style="max-width: 1100px; margin: 0 auto; padding: 0 24px 80px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+    <div class="card">
+      <div style="font-size: 32px; margin-bottom: 12px;">🤖</div>
+      <h3 style="font-size: 18px; font-weight: 700; margin: 0 0 8px;">AI Script Generation</h3>
+      <p style="color: #8b949e; margin: 0; line-height: 1.6;">Groq AI writes high-retention hooks and scripts optimized for short-form finance content.</p>
+    </div>
+    <div class="card">
+      <div style="font-size: 32px; margin-bottom: 12px;">🎙️</div>
+      <h3 style="font-size: 18px; font-weight: 700; margin: 0 0 8px;">Real Voice Narration</h3>
+      <p style="color: #8b949e; margin: 0; line-height: 1.6;">Microsoft Edge TTS generates natural-sounding narration for every video, completely free.</p>
+    </div>
+    <div class="card">
+      <div style="font-size: 32px; margin-bottom: 12px;">🎬</div>
+      <h3 style="font-size: 18px; font-weight: 700; margin: 0 0 8px;">Auto Video Assembly</h3>
+      <p style="color: #8b949e; margin: 0; line-height: 1.6;">FFmpeg assembles 1080×1920 MP4 videos ready for YouTube Shorts, Reels, and TikTok.</p>
+    </div>
+    <div class="card">
+      <div style="font-size: 32px; margin-bottom: 12px;">📤</div>
+      <h3 style="font-size: 18px; font-weight: 700; margin: 0 0 8px;">Auto Publishing</h3>
+      <p style="color: #8b949e; margin: 0; line-height: 1.6;">Connect your YouTube and Instagram accounts. Videos publish automatically after generation.</p>
+    </div>
+    <div class="card">
+      <div style="font-size: 32px; margin-bottom: 12px;">🧪</div>
+      <h3 style="font-size: 18px; font-weight: 700; margin: 0 0 8px;">A/B Testing</h3>
+      <p style="color: #8b949e; margin: 0; line-height: 1.6;">Bayesian experiment engine tests hook patterns and learns what performs best for your audience.</p>
+    </div>
+    <div class="card">
+      <div style="font-size: 32px; margin-bottom: 12px;">📊</div>
+      <h3 style="font-size: 18px; font-weight: 700; margin: 0 0 8px;">Smart Analytics</h3>
+      <p style="color: #8b949e; margin: 0; line-height: 1.6;">Portfolio engine tracks ROI across accounts and automatically reallocates based on performance.</p>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div style="text-align: center; padding: 60px 24px 100px; border-top: 1px solid #21262d;">
+    <h2 style="font-size: 36px; font-weight: 700; margin: 0 0 16px;">Ready to automate your content?</h2>
+    <p style="color: #8b949e; margin: 0 0 32px;">Free to use. No credit card required.</p>
+    <a href="/register" class="btn-primary">Create Your Account →</a>
+  </div>
+</body>
+</html>

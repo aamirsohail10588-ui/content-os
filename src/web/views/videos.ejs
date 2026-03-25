@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Videos — Content OS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; display: flex; min-height: 100vh; }
+    .sidebar { width: 240px; background: #161b22; border-right: 1px solid #21262d; padding: 24px 16px; flex-shrink: 0; display: flex; flex-direction: column; }
+    .main { flex: 1; padding: 32px; overflow-y: auto; }
+    .nav-link { color: #8b949e; padding: 10px 14px; border-radius: 8px; text-decoration: none; display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; transition: all 0.2s; margin-bottom: 4px; }
+    .nav-link:hover, .nav-link.active { color: #e6edf3; background: #21262d; }
+    .table-row { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px 20px; margin-bottom: 10px; display: flex; align-items: center; gap: 16px; }
+    .status-generating { color: #d29922; }
+    .status-generated { color: #58a6ff; }
+    .status-published { color: #3fb950; }
+    .status-failed { color: #f85149; }
+    .btn-sm { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; text-decoration: none; display: inline-block; }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: #161b22; border: 1px solid #30363d; border-radius: 16px; padding: 28px; width: 420px; max-width: 95vw; position: relative; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div style="font-size: 18px; font-weight: 700; margin-bottom: 32px; padding: 0 14px;">⚡ Content OS</div>
+    <nav style="flex: 1;">
+      <a href="/dashboard" class="nav-link">📊 Dashboard</a>
+      <a href="/videos" class="nav-link active">🎬 Videos</a>
+      <a href="/connect" class="nav-link">🔗 Connections</a>
+      <a href="/settings" class="nav-link">⚙️ Settings</a>
+    </nav>
+    <div style="border-top: 1px solid #21262d; padding-top: 16px; margin-top: 16px;">
+      <div style="font-size: 13px; color: #8b949e; padding: 0 14px; margin-bottom: 8px;"><%= user.name %></div>
+      <a href="/logout" class="nav-link" style="color: #f85149;">🚪 Sign Out</a>
+    </div>
+  </div>
+
+  <div class="main">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px;">
+      <div>
+        <h1 style="font-size: 26px; font-weight: 700; margin: 0 0 4px;">Videos</h1>
+        <p style="color: #8b949e; margin: 0;"><%= videos.length %> videos total</p>
+      </div>
+      <a href="/dashboard" style="background: #238636; color: #fff; padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; text-decoration: none;">+ Generate New</a>
+    </div>
+
+    <% if (videos.length === 0) { %>
+      <div style="text-align: center; padding: 80px; color: #8b949e;">
+        <div style="font-size: 64px; margin-bottom: 16px;">🎬</div>
+        <h2 style="margin: 0 0 8px;">No videos yet</h2>
+        <p style="margin: 0 0 24px;">Generate your first video from the dashboard</p>
+        <a href="/dashboard" style="background: #238636; color: #fff; padding: 12px 24px; border-radius: 8px; font-weight: 600; text-decoration: none;">Go to Dashboard</a>
+      </div>
+    <% } else { %>
+      <% videos.forEach(v => { %>
+        <div class="table-row" id="row-<%= v.id %>">
+          <div style="width: 48px; height: 48px; background: #0d1117; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0;">🎬</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;"><%= v.topic %></div>
+            <% if (v.hook) { %>
+              <div style="color: #8b949e; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">"<%= v.hook %>"</div>
+            <% } else if (v.status === 'failed' && v.error_message) { %>
+              <div style="color: #f85149; font-size: 12px;" title="<%= v.error_message %>">⚠ <%= (v.error_message || '').substring(0, 80) %></div>
+            <% } %>
+            <div style="color: #8b949e; font-size: 12px; margin-top: 4px;"><%= new Date(v.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) %></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+            <% if (v.duration) { %><span style="color: #8b949e; font-size: 13px;"><%= Math.round(v.duration) %>s</span><% } %>
+            <% if (v.hook_score) { %><span style="color: #8b949e; font-size: 13px;">Score: <%= v.hook_score %></span><% } %>
+            <span class="status-<%= v.status %>" style="font-size: 13px; font-weight: 600; text-transform: capitalize; min-width: 80px;" id="status-<%= v.id %>"><%= v.status %></span>
+
+            <!-- Preview button (only if video file exists) -->
+            <% if (v.output_path && v.status !== 'failed' && v.status !== 'generating') { %>
+              <button class="btn-sm" data-id="<%= v.id %>" data-topic="<%= v.topic %>" onclick="previewVideo(this.dataset.id, this.dataset.topic)" style="background: #21262d; color: #58a6ff; border: 1px solid #30363d;">▶ Preview</button>
+            <% } %>
+
+            <!-- Publish button for generated-but-not-published videos -->
+            <% if (v.status === 'generated') { %>
+              <button class="btn-sm" onclick="publishVideo(<%= v.id %>)" id="publish-btn-<%= v.id %>" style="background: #238636; color: #fff;">📤 Publish</button>
+            <% } %>
+
+            <!-- Published links -->
+            <% if (v.youtube_url) { %><a href="<%= v.youtube_url %>" target="_blank" class="btn-sm" style="background: #cc0000; color: #fff;">▶ YouTube</a><% } %>
+            <% if (v.instagram_url) { %><a href="<%= v.instagram_url %>" target="_blank" class="btn-sm" style="background: linear-gradient(135deg, #833ab4, #fd1d1d); color: #fff;">📷 Reel</a><% } %>
+          </div>
+        </div>
+      <% }) %>
+    <% } %>
+  </div>
+
+  <!-- Preview Modal -->
+  <div class="modal-overlay" id="previewModal">
+    <div class="modal">
+      <button onclick="closePreview()" style="position: absolute; top: 12px; right: 16px; background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer;">✕</button>
+      <h3 id="previewTitle" style="margin: 0 0 16px; font-size: 16px; font-weight: 700; padding-right: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></h3>
+      <video id="previewPlayer" controls style="width: 100%; border-radius: 8px; background: #000; max-height: 500px;" preload="metadata">
+        Your browser does not support video playback.
+      </video>
+      <div id="previewPublishArea" style="margin-top: 16px;"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentPreviewId = null;
+
+    function previewVideo(videoId, title) {
+      currentPreviewId = videoId;
+      document.getElementById('previewTitle').textContent = title;
+      const player = document.getElementById('previewPlayer');
+      player.src = '/api/video/' + videoId + '/file';
+      player.load();
+
+      // Show publish button in modal if video is 'generated'
+      const statusEl = document.getElementById('status-' + videoId);
+      const status = statusEl ? statusEl.textContent.trim() : '';
+      const publishArea = document.getElementById('previewPublishArea');
+      if (status === 'generated') {
+        publishArea.innerHTML = `
+          <button onclick="publishVideo(${videoId})" id="modal-publish-btn" style="width:100%;background:#238636;color:#fff;padding:12px;border-radius:8px;font-weight:600;font-size:14px;border:none;cursor:pointer;">
+            📤 Publish to Connected Platforms
+          </button>
+          <div id="publish-result" style="margin-top:10px;font-size:13px;"></div>
+        `;
+      } else {
+        publishArea.innerHTML = '';
+      }
+
+      document.getElementById('previewModal').classList.add('open');
+    }
+
+    function closePreview() {
+      const player = document.getElementById('previewPlayer');
+      player.pause();
+      player.src = '';
+      document.getElementById('previewModal').classList.remove('open');
+      currentPreviewId = null;
+    }
+
+    document.getElementById('previewModal').addEventListener('click', function(e) {
+      if (e.target === this) closePreview();
+    });
+
+    async function publishVideo(videoId) {
+      const btn = document.getElementById('publish-btn-' + videoId) || document.getElementById('modal-publish-btn');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Publishing...'; }
+
+      const res = await fetch('/api/video/' + videoId + '/publish', { method: 'POST' });
+      const data = await res.json();
+
+      if (data.success) {
+        // Update status in list
+        const statusEl = document.getElementById('status-' + videoId);
+        if (statusEl) { statusEl.textContent = 'published'; statusEl.className = 'status-published'; statusEl.style.cssText += 'font-size:13px;font-weight:600;min-width:80px;'; }
+
+        // Remove publish button from row
+        const rowBtn = document.getElementById('publish-btn-' + videoId);
+        if (rowBtn) rowBtn.remove();
+
+        // Add platform links
+        const row = document.getElementById('row-' + videoId);
+        if (row && data.youtubeUrl) {
+          const link = document.createElement('a');
+          link.href = data.youtubeUrl; link.target = '_blank';
+          link.className = 'btn-sm';
+          link.style.cssText = 'background:#cc0000;color:#fff;text-decoration:none;';
+          link.textContent = '▶ YouTube';
+          row.querySelector('[style*="gap: 10px"]')?.appendChild(link);
+        }
+
+        // Show success in modal if open
+        const resultEl = document.getElementById('publish-result');
+        if (resultEl) {
+          resultEl.innerHTML = `<span style="color:#3fb950;">✓ Published successfully!</span>` +
+            (data.youtubeUrl ? ` <a href="${data.youtubeUrl}" target="_blank" style="color:#58a6ff;">View on YouTube →</a>` : '');
+          if (btn) { btn.textContent = '✓ Published'; btn.style.background = '#1a4731'; }
+        }
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '📤 Publish'; }
+        const resultEl = document.getElementById('publish-result');
+        if (resultEl) resultEl.innerHTML = `<span style="color:#f85149;">✗ ${data.error}</span>`;
+        else alert('Publish failed: ' + data.error);
+      }
+    }
+  </script>
+</body>
+</html>
