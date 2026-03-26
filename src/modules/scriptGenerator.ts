@@ -17,7 +17,7 @@ import {
   PipelineStage,
 } from '../types';
 import { SCRIPT_CONFIG, SYSTEM_CONFIG } from '../config';
-import { callClaudeDirectly, callClaudeWithFallback } from '../infra/aiClient';
+import { callClaudeWithFallback } from '../infra/aiClient';
 import { createLogger } from '../infra/logger';
 
 const log = createLogger('ScriptGenerator');
@@ -260,11 +260,11 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
   if (researchContext) log.info('Using pre-researched brief', { chars: researchContext.length });
 
   async function attemptGeneration(temperature: number): Promise<{ script: Script; tokensUsed: number; model: string }> {
-    const response = await callClaudeDirectly(
+    const response = await callClaudeWithFallback(
       {
         systemPrompt: buildSystemPrompt(request.niche, request.tone, language, researchContext),
         prompt: buildScriptPrompt(request, structure, language, researchContext),
-        maxTokens: 800,
+        maxTokens: 600,
         temperature,
       },
       () => JSON.stringify(mockFallback)

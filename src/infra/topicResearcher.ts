@@ -97,18 +97,39 @@ If headlines don't have specifics, use your training knowledge for known facts.`
         'X-Title': 'Content OS',
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: 'anthropic/claude-sonnet-4-5',
         max_tokens: 450,
         temperature: 0.1,
         messages: [
           {
             role: 'system',
-            content: 'You are a research analyst. Provide specific, factual research for content creators. Be precise with numbers and names. No generic statements.',
+            content: `You are a strict news research extractor for viral short-form video content.
+You will receive recent news headlines about any topic.
+Your ONLY job is to extract facts FROM THESE HEADLINES ONLY.
+
+ABSOLUTE RULES:
+- Use ONLY information present in the provided headlines
+- NEVER use your own training knowledge or memory
+- NEVER fill gaps with assumptions or general knowledge
+- NEVER add context from before these headlines
+- If headlines say X happened, report exactly X
+- If headlines do not mention something, write: not confirmed in headlines
+- All dates, names, numbers, events must come FROM the headlines only
+- If headlines are insufficient, say so clearly
+
+Output format (always use this structure):
+CURRENT_STATUS: [what is happening RIGHT NOW according to headlines]
+KEY_FACT_1: [most important specific fact from headlines — with exact number or name if available]
+KEY_FACT_2: [second important fact from headlines]
+KEY_FACT_3: [third fact — preferably something surprising or non-obvious]
+UNIQUE_ANGLE: [the most interesting or unexpected thing found in these headlines]
+
+This works for ANY topic: sports, politics, finance, technology, entertainment, health, etc.`,
           },
           { role: 'user', content: prompt },
         ],
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(25_000),
     });
 
     if (!response.ok) return '';
@@ -136,34 +157,31 @@ async function extractInsight(rawResearch: string, topic: string): Promise<strin
         'X-Title': 'Content OS',
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: 'anthropic/claude-sonnet-4-5',
         max_tokens: 250,
         temperature: 0.2,
         messages: [
           {
             role: 'system',
-            content: `You are a viral content strategist for Indian short-form video.
-Convert raw research into a content insight brief.
+            content: `You are a viral content strategist.
+Work ONLY from the research text provided below.
+Do NOT add any information from your training data or general knowledge.
+Do NOT fill gaps with assumptions.
+
+Convert the provided research into a content insight:
 
 Output exactly 4 lines:
-TENSION: [what is the conflict, contradiction, or surprising fact]
-CURIOSITY_GAP: [what viewers don't know but will want to]
-EMOTIONAL_HOOK: [fear / shock / curiosity / pride / outrage — pick one + why]
-SCRIPT_ANGLE: [one sentence — the exact angle this video should take]
+TENSION: [conflict or contradiction found IN THE RESEARCH]
+CURIOSITY_GAP: [what viewers don't know but will want to, based on research]
+EMOTIONAL_HOOK: [fear / shock / curiosity / pride / outrage — based on research facts]
+SCRIPT_ANGLE: [one sentence — the exact angle this video should take, grounded in research]
 
-Be specific. Use real numbers from research. No generic statements.
-
-STRICT CONTENT RULES — these override everything:
-- NEVER suggest betting, gambling, or fantasy sports as the angle
-- NEVER mention Dafabet, Dream11, or any betting platform
-- NEVER use financial loss/gain from betting as emotional hook
-- If research contains betting data, IGNORE it completely
-- Focus ONLY on: team analysis, player performance, match predictions, fan emotions, cricket strategy`,
+If research lacks facts for any line, write: insufficient data`,
           },
           { role: 'user', content: `Research:\n${rawResearch}\n\nTopic: "${topic}"` },
         ],
       }),
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(25_000),
     });
 
     if (!response.ok) return '';

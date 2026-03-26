@@ -28,6 +28,7 @@
     "express-rate-limit": "^8.3.1",
     "express-session": "^1.19.0",
     "googleapis": "^171.4.0",
+    "groq-sdk": "^1.1.1",
     "ioredis": "^5.10.1",
     "msedge-tts": "^2.0.4",
     "pg": "^8.20.0",
