@@ -1,6 +1,6 @@
 // ============================================================
 // MODULE: index.ts
-// PURPOSE: CLI entry point — full Phase 1–4 system demo
+// PURPOSE: CLI entry point — Phase 1–4 system demo
 // PHASE: 1–4
 // STATUS: ACTIVE
 // USAGE: npx ts-node src/index.ts
@@ -13,11 +13,11 @@ import { ContentConfig, VideoFormat } from './types';
 import { SYSTEM_CONFIG } from './config';
 import { createLogger } from './infra/logger';
 
-// Phase 4 engines
-import { DecisionEngine, PerformanceEntry } from './modules/decisionEngine';
-import { EvolutionEngine, PerformanceData } from './modules/evolutionEngine';
-import { ExperimentEngine } from './modules/experimentEngine';
-import { PortfolioEngine, AllocationStrategy } from './modules/portfolioEngine';
+// Phase 4 engines — singletons from core/engines.ts
+import { decisionEngine, evolutionEngine, experimentEngine, portfolioEngine, HOOK_AB_EXPERIMENT } from './core/engines';
+import { PerformanceEntry } from './modules/decisionEngine';
+import { PerformanceData } from './modules/evolutionEngine';
+import { AllocationStrategy } from './modules/portfolioEngine';
 
 const log = createLogger('Main');
 
@@ -88,41 +88,12 @@ async function main(): Promise<void> {
 
   header('PHASE 4A: A/B Experiment Engine');
 
-  const expEngine = new ExperimentEngine();
-
-  // Create hook pattern A/B test
-  const hookExperiment = expEngine.create('Hook Pattern: Shocking Stat vs Contrarian', [
-    { id: 'shocking_stat', label: 'Shocking Stat', data: { pattern: 'shocking_stat' } },
-    { id: 'contrarian',    label: 'Contrarian',    data: { pattern: 'contrarian' } },
-  ]);
-
-  // Simulate 40 observations each (above 30 minimum threshold)
-  console.log('\nSimulating 80 observations across 2 hook variants...');
-  for (let i = 0; i < 40; i++) {
-    expEngine.recordObservation(hookExperiment.id, 'shocking_stat', {
-      views: 1000 + Math.round(Math.random() * 500),
-      likes: 80 + Math.round(Math.random() * 40),   // ~8–12% engagement
-      comments: 20 + Math.round(Math.random() * 15),
-      shares: 10 + Math.round(Math.random() * 10),
-      avgWatchPercent: 55 + Math.random() * 20,
-    });
-    expEngine.recordObservation(hookExperiment.id, 'contrarian', {
-      views: 1000 + Math.round(Math.random() * 500),
-      likes: 55 + Math.round(Math.random() * 30),   // ~6–9% — lower
-      comments: 12 + Math.round(Math.random() * 10),
-      shares: 6 + Math.round(Math.random() * 8),
-      avgWatchPercent: 48 + Math.random() * 18,
-    });
-  }
-
-  // Thompson sampling — which variant would the system pick?
-  const selectedVariant = expEngine.selectVariant(hookExperiment.id);
-  console.log(`\n  Thompson Sampling picks: "${selectedVariant?.label}"`);
-
-  // Evaluate significance
-  const expResult = hookExperiment.evaluate();
-  const expReport = hookExperiment.getReport();
-  console.log(`\n  Experiment status: ${expReport.status}`);
+  // The experiment is already wired to real pipeline events via core/engines.ts
+  // Just report the current state from the live experiment
+  const expResult = HOOK_AB_EXPERIMENT.evaluate();
+  const expReport = HOOK_AB_EXPERIMENT.getReport();
+  console.log(`\n  Live experiment: "${expReport.name}"`);
+  console.log(`  Status: ${expReport.status}`);
   for (const v of expReport.variants) {
     console.log(`  Variant "${v.label}": ${v.engagementRate} eng rate | CI [${v.ci.lower.toFixed(3)}, ${v.ci.upper.toFixed(3)}]`);
   }
@@ -133,7 +104,7 @@ async function main(): Promise<void> {
     console.log(`\n  No winner yet: ${expResult.reason ?? expResult.status}`);
   }
 
-  const expStats = expEngine.getStats();
+  const expStats = experimentEngine.getStats();
   console.log(`\n  Engine stats: ${expStats.total} experiments | ${expStats.running} running | ${expStats.concluded} concluded`);
 
   // ══════════════════════════════════════════════════════════
@@ -142,9 +113,6 @@ async function main(): Promise<void> {
 
   header('PHASE 4B: Decision Engine');
 
-  const decisionEngine = new DecisionEngine();
-
-  // Build mock performance data from pipeline results
   const mockPlatforms = ['youtube', 'instagram', 'tiktok'];
   const mockPatterns = ['shocking_stat', 'curiosity_gap', 'contrarian', 'bold_claim', 'story_open'];
   const performanceEntries: PerformanceEntry[] = [];
@@ -166,7 +134,7 @@ async function main(): Promise<void> {
     });
   }
 
-  const { patterns, decisions } = decisionEngine.analyze(performanceEntries);
+  const { decisions } = decisionEngine.analyze(performanceEntries);
   console.log(`\n  Analyzed ${performanceEntries.length} performance entries`);
   console.log(`  Generated ${decisions.length} decisions`);
 
@@ -182,7 +150,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Auto-execute high-confidence decisions
   for (const d of autoExec) {
     decisionEngine.execute(d.id);
   }
@@ -195,9 +162,6 @@ async function main(): Promise<void> {
 
   header('PHASE 4C: Evolution Engine');
 
-  const evolutionEngine = new EvolutionEngine();
-
-  // Build evolution-compatible performance data
   const evoData: PerformanceData[] = performanceEntries.map(e => ({
     topic: e.topic,
     hookPattern: e.hookPattern,
@@ -230,7 +194,6 @@ async function main(): Promise<void> {
     console.log(`    ${r.type}: ${r.value} (confidence: ${(r.confidence * 100).toFixed(0)}%) — ${r.reason}`);
   }
 
-  // Get recommended config for next generation
   const recommendedConfig = evolutionEngine.getRecommendedConfig();
   console.log(`\n  Recommended config for next cycle:`);
   console.log(`    Best hook: ${recommendedConfig.preferredHookPatterns[0]?.pattern} (${(recommendedConfig.preferredHookPatterns[0]?.weight * 100).toFixed(1)}%)`);
@@ -246,40 +209,31 @@ async function main(): Promise<void> {
 
   header('PHASE 4D: Portfolio Engine');
 
-  const portfolio = new PortfolioEngine();
+  portfolioEngine.addAccount('yt_finance', { platform: 'youtube', channelName: 'WealthMind', niche: 'finance', subNiche: 'investing' });
+  portfolioEngine.addAccount('ig_finance', { platform: 'instagram', channelName: 'MoneyShorts', niche: 'finance', subNiche: 'personal_finance' });
+  portfolioEngine.addAccount('tt_finance', { platform: 'tiktok', channelName: 'FinanceTok', niche: 'finance', subNiche: 'budgeting' });
 
-  // Add 3 accounts on different platforms
-  portfolio.addAccount('yt_finance', { platform: 'youtube', channelName: 'WealthMind', niche: 'finance', subNiche: 'investing' });
-  portfolio.addAccount('ig_finance', { platform: 'instagram', channelName: 'MoneyShorts', niche: 'finance', subNiche: 'personal_finance' });
-  portfolio.addAccount('tt_finance', { platform: 'tiktok', channelName: 'FinanceTok', niche: 'finance', subNiche: 'budgeting' });
-
-  // Simulate performance history
   console.log('\nSimulating account performance...');
 
-  // YouTube doing great
   for (let i = 0; i < 15; i++) {
-    portfolio.updateAccountMetrics('yt_finance', { videos: 1, revenue: 45 + Math.random() * 30, cost: 12, views: 8000 + Math.round(Math.random() * 5000), engagement: 0.6 + Math.random() * 0.2 });
+    portfolioEngine.updateAccountMetrics('yt_finance', { videos: 1, revenue: 45 + Math.random() * 30, cost: 12, views: 8000 + Math.round(Math.random() * 5000), engagement: 0.6 + Math.random() * 0.2 });
   }
-  // Instagram average
   for (let i = 0; i < 10; i++) {
-    portfolio.updateAccountMetrics('ig_finance', { videos: 1, revenue: 18 + Math.random() * 12, cost: 10, views: 3000 + Math.round(Math.random() * 2000), engagement: 0.3 + Math.random() * 0.15 });
+    portfolioEngine.updateAccountMetrics('ig_finance', { videos: 1, revenue: 18 + Math.random() * 12, cost: 10, views: 3000 + Math.round(Math.random() * 2000), engagement: 0.3 + Math.random() * 0.15 });
   }
-  // TikTok bleeding
   for (let i = 0; i < 12; i++) {
-    portfolio.updateAccountMetrics('tt_finance', { videos: 1, revenue: 4 + Math.random() * 6, cost: 11, views: 1500 + Math.round(Math.random() * 1000), engagement: 0.1 + Math.random() * 0.1 });
+    portfolioEngine.updateAccountMetrics('tt_finance', { videos: 1, revenue: 4 + Math.random() * 6, cost: 11, views: 1500 + Math.round(Math.random() * 1000), engagement: 0.1 + Math.random() * 0.1 });
   }
 
-  // Start BALANCED, then switch to AGGRESSIVE
-  portfolio.setStrategy(AllocationStrategy.AGGRESSIVE);
+  portfolioEngine.setStrategy(AllocationStrategy.AGGRESSIVE);
 
-  const summary = portfolio.getPortfolioSummary();
+  const summary = portfolioEngine.getPortfolioSummary();
   console.log(`\n  Strategy: ${summary.strategy.toUpperCase()}`);
   console.log(`  Accounts: ${summary.accountCount} | Videos: ${summary.totalVideos} | P&L: $${summary.totalProfit.toFixed(2)}`);
   console.log(`  Portfolio ROI: ${(summary.portfolioROI * 100).toFixed(1)}%`);
   console.log(`\n  Account breakdown:`);
   for (const a of summary.accounts) {
-    const healthEmoji = a.health === 'thriving' ? '🟢' : a.health === 'stable' ? '🟡' : a.health === 'bleeding' ? '🔴' : '⚪';
-    console.log(`  ${healthEmoji} ${a.channelName.padEnd(14)} ROI: ${(a.roi * 100).toFixed(1).padStart(6)}%  Eng: ${(a.avgEngagement * 100).toFixed(1).padStart(5)}%  Budget: $${a.budgetAllocation.toFixed(0).padStart(4)}  ${a.videosPerWeek}v/wk  [${a.health}]`);
+    console.log(`  ${a.health === 'thriving' ? '🟢' : a.health === 'stable' ? '🟡' : a.health === 'bleeding' ? '🔴' : '⚪'} ${a.channelName.padEnd(14)} ROI: ${(a.roi * 100).toFixed(1).padStart(6)}%  Eng: ${(a.avgEngagement * 100).toFixed(1).padStart(5)}%  Budget: $${a.budgetAllocation.toFixed(0).padStart(4)}  ${a.videosPerWeek}v/wk  [${a.health}]`);
   }
   console.log(`\n  Health: ${JSON.stringify(summary.healthBreakdown)}`);
   console.log(`\n  Recommendations (${summary.recommendations.length}):`);
@@ -298,7 +252,7 @@ async function main(): Promise<void> {
   console.log(`  Decisions:           ${decStats.totalDecisions} generated (${decStats.executed} auto-executed)`);
   console.log(`  Evolution:           Generation ${evoStats.generation} | ${evoStats.formatRules} format rules`);
   console.log(`  Portfolio:           ${summary.accountCount} accounts | ROI ${(summary.portfolioROI * 100).toFixed(1)}%`);
-  console.log(`\n  ✅ All phases operational.\n`);
+  console.log(`\n  All phases operational.\n`);
 }
 
 main().catch(err => {

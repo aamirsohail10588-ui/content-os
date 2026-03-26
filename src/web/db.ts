@@ -1,68 +1,70 @@
 // ============================================================
 // MODULE: web/db.ts
-// PURPOSE: SQLite database for users, tokens, videos
+// PURPOSE: PostgreSQL database helpers for users, tokens, videos
 // ============================================================
 
-import Database, { Database as DatabaseType } from 'better-sqlite3';
-import * as path from 'path';
-import * as os from 'os';
-import * as fs from 'fs';
+import { pool } from '../infra/db';
+import { QueryResult, QueryResultRow } from 'pg';
 
-const dbDir = path.join(os.homedir(), '.content-os');
-if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+// Re-export the pool so server.ts can use it directly if needed
+export default pool;
 
-const db: DatabaseType = new Database(path.join(dbDir, 'app.db'));
+// ─── TYPED ROW HELPERS ───────────────────────────────────────
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    niche TEXT DEFAULT 'finance',
-    tone TEXT DEFAULT 'authoritative_yet_accessible',
-    voice_language TEXT DEFAULT 'english',
-    voice_gender TEXT DEFAULT 'male',
-    auto_publish INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+export interface UserRow {
+  id: number;
+  name: string;
+  email: string;
+  password: string;
+  niche: string;
+  tone: string;
+  voice_language: string;
+  voice_gender: string;
+  auto_publish: number;
+  created_at: string;
+}
 
-  CREATE TABLE IF NOT EXISTS tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    platform TEXT NOT NULL,
-    access_token TEXT,
-    refresh_token TEXT,
-    account_id TEXT,
-    channel_name TEXT,
-    updated_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(user_id, platform)
-  );
+export interface TokenRow {
+  id: number;
+  user_id: number;
+  platform: string;
+  access_token: string | null;
+  refresh_token: string | null;
+  account_id: string | null;
+  channel_name: string | null;
+  updated_at: string;
+}
 
-  CREATE TABLE IF NOT EXISTS videos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    topic TEXT NOT NULL,
-    hook TEXT,
-    hook_score INTEGER,
-    duration REAL,
-    output_path TEXT,
-    youtube_url TEXT,
-    instagram_url TEXT,
-    status TEXT DEFAULT 'generated',
-    error_message TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+export interface VideoRow {
+  id: number;
+  user_id: number;
+  topic: string;
+  hook: string | null;
+  hook_score: number | null;
+  duration: number | null;
+  output_path: string | null;
+  youtube_url: string | null;
+  instagram_url: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
 
-  -- Add error_message column if it doesn't exist (for existing DBs)
-  CREATE TABLE IF NOT EXISTS _migrations (id TEXT PRIMARY KEY);
+// ─── QUERY WRAPPERS ──────────────────────────────────────────
 
-`);
+/** Run a parameterized query and return the first row or undefined */
+export async function queryOne<T extends QueryResultRow>(sql: string, params: unknown[] = []): Promise<T | undefined> {
+  const result: QueryResult<T> = await pool.query<T>(sql, params);
+  return result.rows[0];
+}
 
-// Migrations for existing databases
-try { db.exec(`ALTER TABLE videos ADD COLUMN error_message TEXT`); } catch { /* exists */ }
-try { db.exec(`ALTER TABLE users ADD COLUMN auto_publish INTEGER DEFAULT 0`); } catch { /* exists */ }
-try { db.exec(`ALTER TABLE users ADD COLUMN voice_language TEXT DEFAULT 'english'`); } catch { /* exists */ }
-try { db.exec(`ALTER TABLE users ADD COLUMN voice_gender TEXT DEFAULT 'male'`); } catch { /* exists */ }
+/** Run a parameterized query and return all rows */
+export async function queryAll<T extends QueryResultRow>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const result: QueryResult<T> = await pool.query<T>(sql, params);
+  return result.rows;
+}
 
-export default db;
+/** Run a parameterized query and return the QueryResult (for INSERT etc.) */
+export async function queryRun(sql: string, params: unknown[] = []): Promise<QueryResult> {
+  return pool.query(sql, params);
+}

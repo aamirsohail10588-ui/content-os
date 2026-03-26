@@ -28,30 +28,37 @@ import { assembleVideo } from '../modules/videoAssembler';
 import { publishVideo, PublishResult } from '../modules/publisher';
 import { checkDuplicate, registerContent } from '../registry/contentRegistry';
 import { createLogger } from '../infra/logger';
+import { redis } from '../infra/redis';
+import { experimentEngine, HOOK_AB_EXPERIMENT } from '../core/engines';
 
 const log = createLogger('Pipeline');
 
-// ─── CHECKPOINT MANAGER (in-memory Phase 1) ─────────────────
-// Phase 2: Redis-backed checkpoint persistence
+// ─── CHECKPOINT MANAGER (Redis-backed) ──────────────────────
 
-const checkpoints: Map<string, PipelineCheckpoint> = new Map();
+const CHECKPOINT_TTL = 86400; // 24h in seconds
 
-function saveCheckpoint(jobId: string, stage: PipelineStage, data: PipelineCheckpoint['data']): void {
+async function saveCheckpoint(jobId: string, stage: PipelineStage, data: PipelineCheckpoint['data']): Promise<void> {
   const checkpoint: PipelineCheckpoint = {
     stage,
     data,
     timestamp: new Date(),
   };
-  checkpoints.set(jobId, checkpoint);
+  await redis.set(`checkpoint:${jobId}`, JSON.stringify(checkpoint), 'EX', CHECKPOINT_TTL);
   log.debug('Checkpoint saved', { jobId, stage });
 }
 
-function getCheckpoint(jobId: string): PipelineCheckpoint | null {
-  return checkpoints.get(jobId) || null;
+async function getCheckpoint(jobId: string): Promise<PipelineCheckpoint | null> {
+  const raw = await redis.get(`checkpoint:${jobId}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as PipelineCheckpoint;
+  } catch {
+    return null;
+  }
 }
 
-function clearCheckpoint(jobId: string): void {
-  checkpoints.delete(jobId);
+async function clearCheckpoint(jobId: string): Promise<void> {
+  await redis.del(`checkpoint:${jobId}`);
 }
 
 // ─── STAGE EXECUTOR WITH TIMEOUT ────────────────────────────
@@ -116,7 +123,7 @@ export async function generateVideo(
     topic,
     currentStage: PipelineStage.DEDUP_CHECK,
     status: JobStatus.IN_PROGRESS,
-    checkpoint: getCheckpoint(jobId),
+    checkpoint: await getCheckpoint(jobId),
     attempts: 1,
     maxAttempts: PIPELINE_CONFIG.maxAttempts,
     createdAt: new Date(),
@@ -155,9 +162,9 @@ export async function generateVideo(
         voiceLanguage: (config as any).voiceLanguage || 'english',
       });
 
-      const bestHook = selectBestHook(hookResult.hooks);
+      const bestHook = await selectBestHook(hookResult.hooks);
 
-      saveCheckpoint(jobId, PipelineStage.HOOK_GENERATION, { hook: bestHook });
+      await saveCheckpoint(jobId, PipelineStage.HOOK_GENERATION, { hook: bestHook });
       return bestHook;
     });
     stagesCompleted.push(PipelineStage.HOOK_GENERATION);
@@ -173,7 +180,7 @@ export async function generateVideo(
         voiceLanguage: (config as any).voiceLanguage || 'english',
       });
 
-      saveCheckpoint(jobId, PipelineStage.SCRIPT_GENERATION, {
+      await saveCheckpoint(jobId, PipelineStage.SCRIPT_GENERATION, {
         hook: hook!,
         script: scriptResult.script,
       });
@@ -208,7 +215,7 @@ export async function generateVideo(
         gender: (config as any).voiceGender || 'male',
       });
 
-      saveCheckpoint(jobId, PipelineStage.VIDEO_ASSEMBLY, {
+      await saveCheckpoint(jobId, PipelineStage.VIDEO_ASSEMBLY, {
         hook: hook!,
         script: script!,
         assemblyResult: result,
@@ -224,9 +231,19 @@ export async function generateVideo(
       topic,
       `${hook!.text}\n\n#finance #money #investing #personalfinance`
     );
+    const publishedUrls = publishResults.filter(r => r.success);
     for (const r of publishResults) {
       if (r.success) log.info(`Published to ${r.platform}`, { url: r.url });
       else log.warn(`Publish failed: ${r.platform}`, { error: r.error });
+    }
+
+    // Wire ExperimentEngine to real production events after successful publish
+    if (publishedUrls.length > 0 && hook) {
+      experimentEngine.recordObservation(HOOK_AB_EXPERIMENT.id, hook.pattern, {
+        views: 0,
+        likes: 0,
+      });
+      log.debug('ExperimentEngine observation recorded', { pattern: hook.pattern });
     }
 
     // ─── STAGE 7: REGISTER IN CONTENT REGISTRY ─────────────
@@ -244,7 +261,7 @@ export async function generateVideo(
     stagesCompleted.push(PipelineStage.REGISTRY_STORE);
 
     // ─── CLEANUP ────────────────────────────────────────────
-    clearCheckpoint(jobId);
+    await clearCheckpoint(jobId);
 
     const totalTimeMs = Date.now() - startTime;
 

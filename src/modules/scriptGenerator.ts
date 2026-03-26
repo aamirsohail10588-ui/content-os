@@ -265,37 +265,77 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
     if (researchContext) log.info('Research ready', { chars: researchContext.length });
   }
 
-  const response = await callClaudeWithFallback(
-    {
-      systemPrompt: buildSystemPrompt(request.niche, request.tone, language),
-      prompt: buildScriptPrompt(request, structure, language, researchContext),
-      maxTokens: 1200,
-      temperature: 0.5,
-    },
-    () => JSON.stringify(mockFallback)
-  );
+  async function attemptGeneration(temperature: number): Promise<{ script: Script; tokensUsed: number; model: string } | null> {
+    const response = await callClaudeWithFallback(
+      {
+        systemPrompt: buildSystemPrompt(request.niche, request.tone, language),
+        prompt: buildScriptPrompt(request, structure, language, researchContext),
+        maxTokens: 1200,
+        temperature,
+      },
+      () => JSON.stringify(mockFallback)
+    );
 
-  // Parse JSON from AI response
-  let parsed = parseScriptJSON(response.content);
-  if (!parsed) {
-    log.warn('JSON parse failed — using mock fallback', { preview: response.content.slice(0, 100) });
-    parsed = mockFallback;
+    let parsed = parseScriptJSON(response.content);
+    if (!parsed) {
+      log.warn('JSON parse failed — using mock fallback', { preview: response.content.slice(0, 100) });
+      parsed = mockFallback;
+    }
+
+    const segs = buildSegmentsFromJSON(parsed, structure, request.hook, language);
+    const ft = segs.map(s => s.text).join(' ');
+    const dur = segs.reduce((sum, s) => sum + s.estimatedDurationSeconds, 0);
+
+    // Duration validation: must be 80%–120% of target
+    const minDur = request.targetDurationSeconds * 0.8;
+    const maxDur = request.targetDurationSeconds * 1.2;
+    if (dur < minDur || dur > maxDur) {
+      log.warn('Script duration out of range', { dur, minDur, maxDur });
+      return null;
+    }
+
+    const s: Script = {
+      id: uuidv4(),
+      hook: request.hook,
+      segments: segs,
+      fullText: ft,
+      totalDurationSeconds: Math.round(dur * 10) / 10,
+      wordCount: ft.split(/\s+/).length,
+      topic: request.topic,
+      fingerprint: generateScriptFingerprint(ft, request.topic),
+    };
+    return { script: s, tokensUsed: response.tokensUsed, model: response.model };
   }
 
-  const segments = buildSegmentsFromJSON(parsed, structure, request.hook, language);
-  const fullText = segments.map(s => s.text).join(' ');
-  const totalDuration = segments.reduce((sum, s) => sum + s.estimatedDurationSeconds, 0);
+  let attempt = await attemptGeneration(0.5);
+  if (!attempt) {
+    log.warn('Script duration out of range on first attempt — regenerating once');
+    attempt = await attemptGeneration(0.6);
+  }
 
-  const script: Script = {
-    id: uuidv4(),
-    hook: request.hook,
-    segments,
-    fullText,
-    totalDurationSeconds: Math.round(totalDuration * 10) / 10,
-    wordCount: fullText.split(/\s+/).length,
-    topic: request.topic,
-    fingerprint: generateScriptFingerprint(fullText, request.topic),
-  };
+  // If both attempts fail duration check, fall back to mock
+  if (!attempt) {
+    log.warn('Script duration validation failed twice — using mock fallback');
+    const segs = buildSegmentsFromJSON(mockFallback, structure, request.hook, language);
+    const ft = segs.map(s => s.text).join(' ');
+    const dur = segs.reduce((sum, s) => sum + s.estimatedDurationSeconds, 0);
+    attempt = {
+      script: {
+        id: uuidv4(),
+        hook: request.hook,
+        segments: segs,
+        fullText: ft,
+        totalDurationSeconds: Math.round(dur * 10) / 10,
+        wordCount: ft.split(/\s+/).length,
+        topic: request.topic,
+        fingerprint: generateScriptFingerprint(ft, request.topic),
+      },
+      tokensUsed: 0,
+      model: 'mock',
+    };
+  }
+
+  const script = attempt.script;
 
   const generationTimeMs = Date.now() - startTime;
   log.info('Script generation complete', {
@@ -309,8 +349,8 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
   return {
     script,
     generationTimeMs,
-    tokensUsed: response.tokensUsed,
-    provider: SYSTEM_CONFIG.useMocks ? 'mock' : response.model,
+    tokensUsed: attempt.tokensUsed,
+    provider: SYSTEM_CONFIG.useMocks ? 'mock' : attempt.model,
   };
 }
 
@@ -401,10 +441,11 @@ VISUAL QUERY (Pexels stock footage search terms — specific to THIS topic):
 - NOT generic: NEVER "business people meeting" — YES "silicon valley tech layoffs workers"
 - 5-8 English words
 
-SCENE STRUCTURE (5-6 scenes):
-1. HOOK: One shocking specific fact that stops scrolling
-2-4. STORY + PROOF + INSIGHT: Build from research — cause, effect, data
-5-6. IMPACT + CTA: Personal consequence, then one action to take
+SCENE STRUCTURE (5-6 scenes) — MANDATORY:
+1. HOOK: Use the hook text verbatim — this is the first segment, word for word.
+2-3. CORE CLAIM: Deliver the core claim immediately. No filler, no wind-up. Start with the most important fact.
+4-5. PROOF: The second-to-last scene MUST contain one concrete data point or statistic (a real number, percentage, or named study).
+6. CTA: End with a single direct call to action — choose exactly ONE: subscribe, comment, or follow. No alternatives, no hedging.
 
 ${jsonSchema}`;
 }

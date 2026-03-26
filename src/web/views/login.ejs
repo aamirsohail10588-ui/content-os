@@ -26,6 +26,7 @@
         <div style="background: #3d0e0e; border: 1px solid #f85149; color: #f85149; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px;"><%= error %></div>
       <% } %>
       <form method="POST" action="/login">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div style="margin-bottom: 16px;">
           <label>Email address</label>
           <input class="input" type="email" name="email" required autofocus>

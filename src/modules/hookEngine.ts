@@ -20,6 +20,7 @@ import { HOOK_CONFIG, SYSTEM_CONFIG } from '../config';
 import { getMockHooks } from '../mocks/mockAiProvider';
 import { callClaudeWithFallback } from '../infra/aiClient';
 import { createLogger } from '../infra/logger';
+import { getHookWeights } from './hookWeightUpdater';
 
 const log = createLogger('HookEngine');
 
@@ -111,6 +112,57 @@ function selectPatterns(count: number, exclude: HookPattern[] = []): HookPattern
 
 // ─── MAIN: GENERATE HOOKS ───────────────────────────────────
 
+// ─── MINIMUM STRENGTH THRESHOLD ─────────────────────────────
+// Per Fix 5: reject hooks where strengthScore < 60
+
+const MIN_STRENGTH_SCORE = 60;
+
+// ─── SINGLE HOOK GENERATOR ──────────────────────────────────
+
+async function generateSingleHook(
+  request: HookGenerationRequest,
+  pattern: HookPattern,
+  temperature: number
+): Promise<{ hook: Hook; tokensUsed: number } | null> {
+  const isIndian = (request.voiceLanguage || 'english') === 'hinglish' || (request.voiceLanguage || 'english') === 'hindi';
+  try {
+    const response = await callClaudeWithFallback(
+      {
+        systemPrompt: isIndian ? buildHinglishHookSystemPrompt() : buildSystemPrompt(request.niche, request.tone),
+        prompt: buildHookPrompt(request.topic, pattern, request.targetDurationSeconds),
+        maxTokens: 150,
+        temperature,
+      },
+      () => {
+        if (isIndian) return `Yaar, ${request.topic} — sach mein shocking hai.`;
+        const mockHooks = getMockHooks(pattern, 1);
+        return mockHooks[0] || `${request.topic} — this changes everything.`;
+      }
+    );
+    const hookText = response.content.trim().replace(/^["']|["']$/g, '');
+    const strengthScore = scoreHook(hookText, pattern);
+
+    if (strengthScore < MIN_STRENGTH_SCORE) {
+      log.warn('Hook below minimum strength, discarding', { pattern, score: strengthScore, threshold: MIN_STRENGTH_SCORE });
+      return null;
+    }
+
+    const hook: Hook = {
+      id: uuidv4(),
+      text: hookText,
+      pattern,
+      estimatedDurationSeconds: estimateDuration(hookText),
+      strengthScore,
+      topic: request.topic,
+      fingerprint: generateFingerprint(hookText, pattern),
+    };
+    return { hook, tokensUsed: response.tokensUsed };
+  } catch (err) {
+    log.error('Hook generation failed for pattern', { pattern, error: (err as Error).message });
+    return null;
+  }
+}
+
 export async function generateHooks(request: HookGenerationRequest): Promise<HookGenerationResult> {
   const startTime = Date.now();
   const language = request.voiceLanguage || 'english';
@@ -125,62 +177,26 @@ export async function generateHooks(request: HookGenerationRequest): Promise<Hoo
   const hooks: Hook[] = [];
   let totalTokens = 0;
 
+  // First pass — temperature 0.85
   for (const pattern of patterns) {
-    try {
-      let hookText: string;
+    const result = await generateSingleHook(request, pattern, 0.85);
+    if (result) {
+      hooks.push(result.hook);
+      totalTokens += result.tokensUsed;
+      log.info('Hook generated', { pattern, score: result.hook.strengthScore });
+    }
+  }
 
-      const isIndian = language === 'hinglish' || language === 'hindi';
-      const response = await callClaudeWithFallback(
-        {
-          systemPrompt: isIndian ? buildHinglishHookSystemPrompt() : buildSystemPrompt(request.niche, request.tone),
-          prompt: buildHookPrompt(request.topic, pattern, request.targetDurationSeconds),
-          maxTokens: 150,
-          temperature: 0.85,
-        },
-        () => {
-          if (isIndian) return `Yaar, ${request.topic} — sach mein shocking hai.`;
-          const mockHooks = getMockHooks(pattern, 1);
-          return mockHooks[0] || `${request.topic} — this changes everything.`;
-        }
-      );
-      hookText = response.content.trim().replace(/^["']|["']$/g, ''); // strip quotes if AI added them
-      totalTokens += response.tokensUsed;
-
-      const strengthScore = scoreHook(hookText, pattern);
-
-      // Filter out weak hooks
-      if (strengthScore < HOOK_CONFIG.minStrengthScore) {
-        log.warn('Hook below minimum strength, discarding', {
-          pattern,
-          score: strengthScore,
-          threshold: HOOK_CONFIG.minStrengthScore,
-        });
-        continue;
+  // If all hooks failed the score filter, retry once with temperature + 0.1
+  if (hooks.length === 0) {
+    log.warn('All hooks failed score filter — retrying with higher temperature');
+    for (const pattern of patterns) {
+      const result = await generateSingleHook(request, pattern, 0.95);
+      if (result) {
+        hooks.push(result.hook);
+        totalTokens += result.tokensUsed;
+        log.info('Hook generated (retry)', { pattern, score: result.hook.strengthScore });
       }
-
-      const hook: Hook = {
-        id: uuidv4(),
-        text: hookText,
-        pattern,
-        estimatedDurationSeconds: estimateDuration(hookText),
-        strengthScore,
-        topic: request.topic,
-        fingerprint: generateFingerprint(hookText, pattern),
-      };
-
-      hooks.push(hook);
-      log.info('Hook generated', {
-        pattern,
-        score: strengthScore,
-        duration: hook.estimatedDurationSeconds,
-      });
-    } catch (err) {
-      const error = err as Error;
-      log.error('Hook generation failed for pattern', {
-        pattern,
-        error: error.message,
-      });
-      // Continue — don't let one pattern failure kill the batch
     }
   }
 
@@ -195,19 +211,58 @@ export async function generateHooks(request: HookGenerationRequest): Promise<Hoo
     throw pipelineError;
   }
 
-  // Sort by strength score descending
-  hooks.sort((a, b) => b.strengthScore - a.strengthScore);
+  // ─── DIVERSITY CHECK: drop duplicates sharing same first word ──
+  const firstWordMap = new Map<string, Hook>();
+  const diverseHooks: Hook[] = [];
+  const slotsToRegenerate: HookPattern[] = [];
+
+  for (const hook of hooks) {
+    const firstWord = hook.text.split(/\s+/)[0].toLowerCase();
+    if (!firstWordMap.has(firstWord)) {
+      firstWordMap.set(firstWord, hook);
+      diverseHooks.push(hook);
+    } else {
+      log.warn('Duplicate first word detected — dropping hook', { firstWord, pattern: hook.pattern });
+      slotsToRegenerate.push(hook.pattern);
+    }
+  }
+
+  // Regenerate missing slots with fresh patterns
+  if (slotsToRegenerate.length > 0) {
+    const freshPatterns = selectPatterns(slotsToRegenerate.length, patterns);
+    for (const pattern of freshPatterns) {
+      const result = await generateSingleHook(request, pattern, 0.95);
+      if (result) {
+        const firstWord = result.hook.text.split(/\s+/)[0].toLowerCase();
+        if (!firstWordMap.has(firstWord)) {
+          firstWordMap.set(firstWord, result.hook);
+          diverseHooks.push(result.hook);
+          totalTokens += result.tokensUsed;
+        }
+      }
+    }
+  }
+
+  const finalHooks = diverseHooks.length > 0 ? diverseHooks : hooks;
+
+  // Sort by (strengthScore * weight) descending using DB-sourced weights
+  const weights = await getHookWeights();
+  finalHooks.sort((a, b) => {
+    const wA = weights[a.pattern] ?? 1.0;
+    const wB = weights[b.pattern] ?? 1.0;
+    return b.strengthScore * wB - a.strengthScore * wA;
+  });
 
   const generationTimeMs = Date.now() - startTime;
 
   log.info('Hook generation complete', {
-    hooksGenerated: hooks.length,
-    bestScore: hooks[0].strengthScore,
+    hooksGenerated: finalHooks.length,
+    bestScore: finalHooks[0].strengthScore,
     timeMs: generationTimeMs,
   });
 
   return {
-    hooks,
+    hooks: finalHooks,
     generationTimeMs,
     tokensUsed: totalTokens,
     provider: SYSTEM_CONFIG.useMocks ? 'mock' : 'claude',
@@ -221,8 +276,15 @@ function buildSystemPrompt(niche: string, tone: string): string {
 Your tone is ${tone}.
 You write hooks that stop the scroll in the first 2-3 seconds.
 Every hook must create an immediate emotional reaction: curiosity, shock, or urgency.
-Never use generic phrases. Be specific. Use numbers and data where possible.
-Output ONLY the hook text, nothing else.`;
+
+RULES — follow exactly:
+- Maximum 8 words total
+- Must start with a number (e.g. "73%", "3") or a provocative word (e.g. "Stop", "Why", "Your", "Nobody")
+- NEVER start with "Did you know" or "Have you ever"
+- Be specific. Use numbers and data where possible.
+- No filler words. Every word must earn its place.
+
+Output ONLY the hook text, nothing else. No quotes. No explanation.`;
 }
 
 function buildHinglishHookSystemPrompt(): string {
@@ -264,10 +326,18 @@ Write one hook. Output only the hook text.`;
 
 // ─── EXPORT: SELECT BEST HOOK ───────────────────────────────
 
-export function selectBestHook(hooks: Hook[]): Hook {
+export async function selectBestHook(hooks: Hook[]): Promise<Hook> {
   if (hooks.length === 0) {
     throw new Error('No hooks to select from');
   }
-  // Already sorted by score in generateHooks, but defensive re-sort
-  return [...hooks].sort((a, b) => b.strengthScore - a.strengthScore)[0];
+
+  // Load hook weights from DB (falls back to empty object = all-1.0)
+  const weights = await getHookWeights();
+
+  // Sort by (strengthScore * weight) descending
+  return [...hooks].sort((a, b) => {
+    const wA = weights[a.pattern] ?? 1.0;
+    const wB = weights[b.pattern] ?? 1.0;
+    return b.strengthScore * wB - a.strengthScore * wA;
+  })[0];
 }
