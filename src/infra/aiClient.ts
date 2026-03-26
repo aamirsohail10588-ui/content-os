@@ -1,37 +1,12 @@
 // ============================================================
 // MODULE: infra/aiClient.ts
-// PURPOSE: Centralized AI client — Claude or Groq (free)
-// PHASE: 2
-// STATUS: ACTIVE
+// PURPOSE: Centralized AI client via OpenRouter
 // ============================================================
 
-import Anthropic from '@anthropic-ai/sdk';
-import Groq from 'groq-sdk';
-import { AI_CONFIG, SYSTEM_CONFIG } from '../config';
+import { SYSTEM_CONFIG } from '../config';
 import { createLogger } from './logger';
 
 const log = createLogger('AiClient');
-
-let _claude: Anthropic | null = null;
-let _groq: Groq | null = null;
-
-function getClaudeClient(): Anthropic {
-  if (!_claude) {
-    const key = AI_CONFIG.claude.apiKey;
-    if (!key || key === 'mock-key') throw new Error('CLAUDE_API_KEY not set');
-    _claude = new Anthropic({ apiKey: key });
-  }
-  return _claude;
-}
-
-function getGroqClient(): Groq {
-  if (!_groq) {
-    const key = process.env.GROQ_API_KEY ?? '';
-    if (!key) throw new Error('GROQ_API_KEY not set');
-    _groq = new Groq({ apiKey: key });
-  }
-  return _groq;
-}
 
 export interface AiRequest {
   systemPrompt: string;
@@ -47,64 +22,82 @@ export interface AiResponse {
   latencyMs: number;
 }
 
-// ─── GROQ CALL ───────────────────────────────────────────────
+// ─── OPENROUTER CALL ─────────────────────────────────────────
 
-async function callGroq(req: AiRequest): Promise<AiResponse> {
+async function callOpenRouter(req: AiRequest, model: string): Promise<AiResponse> {
   const start = Date.now();
-  const client = getGroqClient();
+  const apiKey = process.env.OPENROUTER_API_KEY ?? '';
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
 
-  log.info('Groq API call', { promptLen: req.prompt.length, maxTokens: req.maxTokens });
+  log.info('OpenRouter API call', { model, promptLen: req.prompt.length, maxTokens: req.maxTokens });
 
-  const completion = await client.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    max_tokens: req.maxTokens ?? 4096,
-    temperature: req.temperature ?? 0.8,
-    messages: [
-      { role: 'system', content: req.systemPrompt },
-      { role: 'user', content: req.prompt },
-    ],
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://content-os.app',
+      'X-Title': 'Content OS',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: req.maxTokens ?? 1200,
+      temperature: req.temperature ?? 0.8,
+      messages: [
+        { role: 'system', content: req.systemPrompt },
+        { role: 'user', content: req.prompt },
+      ],
+    }),
   });
 
-  const content = completion.choices[0]?.message?.content?.trim() ?? '';
-  const tokensUsed = (completion.usage?.prompt_tokens ?? 0) + (completion.usage?.completion_tokens ?? 0);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenRouter ${response.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    model?: string;
+  };
+
+  const content = data.choices?.[0]?.message?.content?.trim() ?? '';
+  const tokensUsed = (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0);
   const latencyMs = Date.now() - start;
+  const usedModel = data.model ?? model;
 
-  log.info('Groq response received', { tokensUsed, latencyMs, contentLen: content.length });
+  log.info('OpenRouter response received', { model: usedModel, tokensUsed, latencyMs, contentLen: content.length });
 
-  return { content, tokensUsed, model: completion.model, latencyMs };
+  return { content, tokensUsed, model: usedModel, latencyMs };
 }
 
-// ─── CLAUDE CALL ─────────────────────────────────────────────
+// ─── CLAUDE-ONLY CALL — Claude sonnet, falls back to Gemini then fallback() ──
 
-async function callClaude(req: AiRequest): Promise<AiResponse> {
-  const start = Date.now();
-  const client = getClaudeClient();
-
-  log.info('Claude API call', { promptLen: req.prompt.length, maxTokens: req.maxTokens });
-
-  const message = await client.messages.create({
-    model: AI_CONFIG.claude.model,
-    max_tokens: req.maxTokens ?? AI_CONFIG.claude.maxTokens,
-    temperature: req.temperature ?? AI_CONFIG.claude.temperature,
-    system: req.systemPrompt,
-    messages: [{ role: 'user', content: req.prompt }],
-  });
-
-  const content = message.content
-    .filter(b => b.type === 'text')
-    .map(b => (b as { type: 'text'; text: string }).text)
-    .join('')
-    .trim();
-
-  const tokensUsed = (message.usage?.input_tokens ?? 0) + (message.usage?.output_tokens ?? 0);
-  const latencyMs = Date.now() - start;
-
-  log.info('Claude response received', { tokensUsed, latencyMs, contentLen: content.length });
-
-  return { content, tokensUsed, model: message.model, latencyMs };
+export async function callClaudeDirectly(
+  req: AiRequest,
+  fallback: () => string
+): Promise<AiResponse> {
+  if (SYSTEM_CONFIG.useMocks) {
+    return { content: fallback(), tokensUsed: 0, model: 'mock', latencyMs: 0 };
+  }
+  try {
+    const result = await callOpenRouter(req, 'anthropic/claude-sonnet-4-5');
+    log.info('callClaudeDirectly: used claude-sonnet-4-5');
+    return result;
+  } catch (err) {
+    log.warn('claude-sonnet-4-5 failed — trying gemini-flash-1.5', { error: (err as Error).message });
+    try {
+      const result = await callOpenRouter(req, 'google/gemini-flash-1.5');
+      log.info('callClaudeDirectly: fell back to gemini-flash-1.5');
+      return result;
+    } catch (err2) {
+      log.error('Claude direct call failed — using fallback', { error: (err2 as Error).message });
+      return { content: fallback(), tokensUsed: 0, model: 'fallback', latencyMs: 0 };
+    }
+  }
 }
 
-// ─── SAFE WRAPPER — tries Groq first (free), then Claude, then mock ──
+// ─── SAFE WRAPPER — primary: llama-3.3-70b (free), 429 retry, then fallback() ──
 
 export async function callClaudeWithFallback(
   req: AiRequest,
@@ -114,20 +107,26 @@ export async function callClaudeWithFallback(
     return { content: fallback(), tokensUsed: 0, model: 'mock', latencyMs: 0 };
   }
 
-  // Try Groq first (free tier)
-  if (process.env.GROQ_API_KEY) {
-    try {
-      return await callGroq(req);
-    } catch (err) {
-      log.warn('Groq failed — trying Claude', { error: (err as Error).message });
-    }
-  }
+  const is429 = (err: Error) => err.message.includes('429') || err.message.includes('rate-limit');
 
-  // Try Claude
   try {
-    return await callClaude(req);
+    const result = await callOpenRouter(req, 'meta-llama/llama-3.3-70b-instruct:free');
+    log.info('callClaudeWithFallback: used llama-3.3-70b-instruct:free');
+    return result;
   } catch (err) {
-    log.error('Claude API failed — using fallback', { error: (err as Error).message });
+    if (is429(err as Error)) {
+      log.warn('Rate limited (429) — waiting 2s then retrying', { error: (err as Error).message });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      try {
+        const retryResult = await callOpenRouter(req, 'meta-llama/llama-3.3-70b-instruct:free');
+        log.info('callClaudeWithFallback: retry succeeded');
+        return retryResult;
+      } catch (retryErr) {
+        log.error('Retry failed — using fallback', { error: (retryErr as Error).message });
+        return { content: fallback(), tokensUsed: 0, model: 'fallback', latencyMs: 0 };
+      }
+    }
+    log.error('OpenRouter call failed — using fallback', { error: (err as Error).message });
     return { content: fallback(), tokensUsed: 0, model: 'fallback', latencyMs: 0 };
   }
 }

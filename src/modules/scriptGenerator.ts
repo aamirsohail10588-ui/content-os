@@ -17,7 +17,7 @@ import {
   PipelineStage,
 } from '../types';
 import { SCRIPT_CONFIG, SYSTEM_CONFIG } from '../config';
-import { callClaudeWithFallback } from '../infra/aiClient';
+import { callClaudeDirectly, callClaudeWithFallback } from '../infra/aiClient';
 import { createLogger } from '../infra/logger';
 
 const log = createLogger('ScriptGenerator');
@@ -260,7 +260,7 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
   if (researchContext) log.info('Using pre-researched brief', { chars: researchContext.length });
 
   async function attemptGeneration(temperature: number): Promise<{ script: Script; tokensUsed: number; model: string }> {
-    const response = await callClaudeWithFallback(
+    const response = await callClaudeDirectly(
       {
         systemPrompt: buildSystemPrompt(request.niche, request.tone, language, researchContext),
         prompt: buildScriptPrompt(request, structure, language, researchContext),
@@ -312,7 +312,28 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
 
   const attempt = await attemptGeneration(0.5);
 
-  const script = attempt.script;
+  let script = attempt.script;
+
+  // ─── POST-GENERATION HARD CAP: 5 segments max (160 word target) ──
+  if (script.wordCount > 160 && script.segments.length > 5) {
+    const capped = script.segments.slice(0, 5);
+    const cappedText = capped.map(s => s.text).join(' ');
+    const cappedDur = Math.round(capped.reduce((sum, s) => sum + s.estimatedDurationSeconds, 0) * 10) / 10;
+    const cappedWordCount = cappedText.split(/\s+/).filter(Boolean).length;
+    log.info('Script capped at 5 segments for 60s target', {
+      originalSegments: script.segments.length,
+      originalWordCount: script.wordCount,
+      cappedWordCount,
+      cappedDuration: cappedDur,
+    });
+    script = {
+      ...script,
+      segments: capped,
+      fullText: cappedText,
+      totalDurationSeconds: cappedDur,
+      wordCount: cappedWordCount,
+    };
+  }
 
   const generationTimeMs = Date.now() - startTime;
   log.info('Script generation complete', {

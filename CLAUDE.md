@@ -67,8 +67,7 @@ Fingerprints every generated piece using SHA-256 hashes of topic + hook text + s
 | Variable                                          | Purpose                                                                              |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `USE_MOCKS`                                       | `false` = real APIs, `true` (default) = mock data                                    |
-| `CLAUDE_API_KEY`                                  | Primary LLM (fallback after Groq)                                                    |
-| `GROQ_API_KEY`                                    | Primary LLM (free tier, tried first)                                                 |
+| `OPENROUTER_API_KEY`                              | Required for all AI calls via OpenRouter                                             |
 | `ELEVENLABS_API_KEY`                              | Voice generation (Rachel voice)                                                      |
 | `YOUTUBE_REFRESH_TOKEN`                           | Required for YouTube upload (generate via `npm run auth:youtube`)                    |
 | `PEXELS_API_KEY`                                  | Stock footage backgrounds (free at pexels.com/api)                                   |

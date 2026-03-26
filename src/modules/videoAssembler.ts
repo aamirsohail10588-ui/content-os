@@ -23,40 +23,6 @@ import { fetchStockClips } from '../infra/stockFetcher';
 
 const log = createLogger('VideoAssembler');
 
-// ─── FONT NAMES (fontconfig — spaces OK in filter_complex, no colon issue) ──
-
-const FONT_BOLD   = 'Arial Bold';
-const FONT_NORMAL = 'Arial';
-
-// ─── BEAT ACCENT COLORS (used for panels, bars, highlights) ──
-
-const BEAT_ACCENTS: Record<string, string> = {
-  hook:        'ff2233',  // hot red
-  context:     'ff8800',  // orange
-  explanation: '00aaff',  // blue
-  impact:      'ffcc00',  // gold
-  cta:         '00cc66',  // green
-  tension:     'ff2233',
-  revelation:  '00aaff',
-  proof:       'ffffff',
-  application: '00cc66',
-  urgency:     'ffcc00',
-};
-
-// ─── BEAT DISPLAY LABELS ─────────────────────────────────────
-
-const BEAT_LABELS: Record<string, string> = {
-  hook:        'BREAKING',
-  context:     'STORY',
-  explanation: 'BREAKDOWN',
-  impact:      'IMPACT',
-  cta:         'ACTION',
-  tension:     'TENSION',
-  revelation:  'REVEAL',
-  proof:       'FACT',
-  application: 'HOW TO',
-  urgency:     'URGENT',
-};
 
 // ─── TEXT HELPERS ────────────────────────────────────────────
 
@@ -72,22 +38,6 @@ function sanitize(text: string, maxLen = 48): string {
     .replace(/\s+/g, ' ')
     .trim()
     .substring(0, maxLen);
-}
-
-function wrapText(text: string, maxChars = 28): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let current = '';
-  for (const word of words) {
-    if ((current + ' ' + word).trim().length > maxChars && current.length > 0) {
-      lines.push(current.trim());
-      current = word;
-    } else {
-      current = (current + ' ' + word).trim();
-    }
-  }
-  if (current) lines.push(current.trim());
-  return lines.slice(0, 3); // max 3 lines
 }
 
 // ─── CAPTION GROUP BUILDER ───────────────────────────────────
@@ -183,7 +133,9 @@ function runRealFfmpeg(
   audioPath?: string,
   stockClips: (string | null)[] = []
 ): void {
-  const { width: W, height: H } = resolution;
+  // Fixed at 720p — reduces memory usage ~60% vs 1080p
+  const W = 720;
+  const H = 1280;
   const segments = script.segments;
 
   // Build inputs: stock clips where available, lavfi color fallback otherwise
@@ -193,7 +145,6 @@ function runRealFfmpeg(
     const dur = Math.max(0.5, seg.estimatedDurationSeconds);
     const clip = stockClips[i];
     if (clip && fs.existsSync(clip)) {
-      // Loop clip in case it's shorter than segment duration
       inputs.push('-stream_loop', '-1', '-t', String(dur), '-i', clip);
     } else {
       inputs.push('-f', 'lavfi', '-i', `color=c=0x060912:size=${W}x${H}:duration=${dur}:rate=30`);
@@ -201,73 +152,26 @@ function runRealFfmpeg(
   }
 
   const filterParts: string[] = [];
-  const topicSafe = sanitize(script.topic, 36);
   const totalSegs = segments.length;
 
   for (let i = 0; i < totalSegs; i++) {
     const seg = segments[i];
     const clip = stockClips[i];
     const hasStockClip = !!(clip && fs.existsSync(clip));
-    const accent = BEAT_ACCENTS[seg.emotionalBeat] ?? 'ff2233';
-    const beatLabel = BEAT_LABELS[seg.emotionalBeat] ?? seg.emotionalBeat.toUpperCase();
-    const isHook = seg.emotionalBeat === 'hook';
-    const isCta = seg.emotionalBeat === 'cta';
-
-    // Progress bar width (bottom)
-    const progressW = Math.round(((i + 1) / totalSegs) * W);
 
     let f = `[${i}:v]`;
 
     // ── 1. BASE LAYER — stock footage or dark background ──────
     if (hasStockClip) {
-      // Scale to portrait, normalize SAR to 1:1 (prevents SAR mismatch in concat),
-      // force yuv420p for consistent color space, then light scrim
       f += `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuv420p,setpts=PTS-STARTPTS`;
-      // Very light scrim — just enough to make white text readable, keeps footage colors vivid
       f += `,drawbox=x=0:y=0:w=${W}:h=${H}:color=0x000000@0.28:t=fill`;
     } else {
-      // Fallback: deep dark background with subtle gradient overlays
-      f += `drawbox=x=0:y=0:w=${W}:h=${Math.round(H * 0.5)}:color=0x0a0f1e@0.35:t=fill`;
-      f += `,drawbox=x=0:y=${Math.round(H * 0.5)}:w=${W}:h=${Math.round(H * 0.5)}:color=0x03060e@0.35:t=fill`;
+      f += `drawbox=x=0:y=0:w=${W}:h=${H}:color=0x060912@1:t=fill`;
     }
 
-    // ── 2. TOP HEADER BAR ──────────────────────────────────────
-    f += `,drawbox=x=0:y=0:w=${W}:h=108:color=0x0a0d1a@1:t=fill`;
-    // accent line under header
-    f += `,drawbox=x=0:y=106:w=${W}:h=4:color=0x${accent}@1:t=fill`;
-    // beat badge (left)
-    f += `,drawbox=x=32:y=30:w=200:h=48:color=0x${accent}@0.18:t=fill`;
-    f += `,drawbox=x=32:y=30:w=4:h=48:color=0x${accent}@1:t=fill`;
-    f += `,drawtext=font=${FONT_BOLD}:text='${sanitize(beatLabel, 14)}':fontcolor=0x${accent}:fontsize=22:x=46:y=46`;
-    // topic (right)
-    f += `,drawtext=font=${FONT_NORMAL}:text='${topicSafe}':fontcolor=white@0.4:fontsize=18:x=(w-text_w-36):y=44`;
-
-    // ── 3. LOWER-THIRD CAPTION (static for full segment duration) ──
-    // No enable= expression needed — each segment is its own clip, naturally timed.
-    const captionBarY = Math.round(H * 0.80);
-    f += `,drawbox=x=0:y=${captionBarY - 14}:w=${W}:h=100:color=0x000000@0.78:t=fill`;
-    f += `,drawbox=x=0:y=${captionBarY - 14}:w=${W}:h=4:color=0x${accent}@0.9:t=fill`;
-    const captionLines = wrapText(seg.text, 22);
-    captionLines.forEach((line, li) => {
-      f += `,drawtext=font=${FONT_BOLD}:text='${sanitize(line, 36)}':fontcolor=0x${accent}:fontsize=38:shadowcolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${captionBarY + 10 + li * 44}`;
-    });
-
-    // ── 4. PROGRESS BAR (bottom) ──────────────────────────────
-    f += `,drawbox=x=0:y=${H - 8}:w=${W}:h=8:color=0x111827@1:t=fill`;
-    f += `,drawbox=x=0:y=${H - 8}:w=${progressW}:h=8:color=0x${accent}@1:t=fill`;
-
-    // ── 6. SEGMENT DOTS ───────────────────────────────────────
-    const dotSpacing = 28;
-    const totalDotsW = totalSegs * dotSpacing;
-    const dotsStartX = Math.round((W - totalDotsW) / 2);
-    for (let d = 0; d < totalSegs; d++) {
-      const dotX = dotsStartX + d * dotSpacing;
-      const dotColor = d <= i ? `0x${accent}` : 'white@0.2';
-      f += `,drawbox=x=${dotX}:y=${H - 36}:w=14:h=14:color=${dotColor}:t=fill`;
-    }
-
-    // ── 7. VIGNETTE (cinematic depth — subtle, only on dark backgrounds) ──
-    if (!hasStockClip) f += `,vignette=PI/5`;
+    // ── 2. CAPTION SUBTITLE (lower third, simple box style) ───
+    const captionText = sanitize(seg.text, 48);
+    f += `,drawtext=text='${captionText}':fontsize=28:fontcolor=white:x=(w-text_w)/2:y=h-100:box=1:boxcolor=black@0.5:boxborderw=8`;
 
     f += `[v${i}]`;
     filterParts.push(f);
@@ -292,8 +196,11 @@ function runRealFfmpeg(
     '-map', '[out]',
     ...(hasAudio ? ['-map', `${audioIndex}:a`] : []),
     '-c:v', 'libx264',
-    '-preset', 'ultrafast',
+    '-preset', 'superfast',
     '-crf', '22',
+    '-b:v', '2000k',
+    '-maxrate', '2500k',
+    '-bufsize', '4000k',
     '-pix_fmt', 'yuv420p',
     ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : ['-an']),
     outputPath,

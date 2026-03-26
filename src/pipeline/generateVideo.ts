@@ -34,6 +34,47 @@ import { experimentEngine, HOOK_AB_EXPERIMENT } from '../core/engines';
 
 const log = createLogger('Pipeline');
 
+// ─── NICHE AUTO-DETECT ───────────────────────────────────────
+
+async function detectNiche(topic: string): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return 'general';
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://content-os.app',
+        'X-Title': 'Content OS',
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        max_tokens: 10,
+        temperature: 0.1,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a content categorizer. Return ONLY a single lowercase word that best describes the niche of the given topic. Choose from: finance, cricket, tech, health, politics, entertainment, business, general.',
+          },
+          { role: 'user', content: `Topic: ${topic}` },
+        ],
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) return 'general';
+    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    const raw = data.choices?.[0]?.message?.content?.trim().toLowerCase() ?? '';
+    const valid = ['finance', 'cricket', 'tech', 'health', 'politics', 'entertainment', 'business', 'general'];
+    const match = valid.find(n => raw.includes(n));
+    log.info('Niche detected', { topic: topic.slice(0, 50), detected: match ?? 'general' });
+    return match ?? 'general';
+  } catch (err) {
+    log.warn('detectNiche failed', { error: (err as Error).message });
+    return 'general';
+  }
+}
+
 // ─── CHECKPOINT MANAGER (Redis-backed) ──────────────────────
 
 const CHECKPOINT_TTL = 86400; // 24h in seconds
@@ -108,6 +149,10 @@ export async function generateVideo(
   const jobId = uuidv4();
   const startTime = Date.now();
   const stagesCompleted: PipelineStage[] = [];
+
+  // Auto-detect niche from topic before pipeline starts
+  const detectedNiche = await detectNiche(topic);
+  config = { ...config, niche: detectedNiche };
 
   log.info('Pipeline started', {
     jobId,

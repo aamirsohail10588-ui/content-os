@@ -14,7 +14,6 @@
     "weights:update": "ts-node src/scripts/updateWeights.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/csurf": "^1.11.5",
     "@types/pg": "^8.20.0",
@@ -29,7 +28,6 @@
     "express-rate-limit": "^8.3.1",
     "express-session": "^1.19.0",
     "googleapis": "^171.4.0",
-    "groq-sdk": "^1.1.1",
     "ioredis": "^5.10.1",
     "msedge-tts": "^2.0.4",
     "pg": "^8.20.0",

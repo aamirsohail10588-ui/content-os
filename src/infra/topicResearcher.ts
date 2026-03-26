@@ -1,6 +1,6 @@
 // ============================================================
 // MODULE: infra/topicResearcher.ts
-// PURPOSE: Research topics using Google News RSS + Groq synthesis
+// PURPOSE: Research topics using Google News RSS + OpenRouter synthesis
 //          for accurate, current, topic-specific script facts
 // ============================================================
 
@@ -63,11 +63,11 @@ async function fetchNewsHeadlines(topic: string): Promise<string[]> {
   }
 }
 
-// ─── GROQ SYNTHESIS ──────────────────────────────────────────
+// ─── OPENROUTER SYNTHESIS ────────────────────────────────────
 
 async function synthesizeResearch(headlines: string[], topic: string): Promise<string> {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (!groqKey) return '';
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return '';
 
   const headlineText = headlines.length > 0
     ? `Recent news headlines:\n${headlines.map((h, i) => `${i + 1}. ${h}`).join('\n')}`
@@ -88,11 +88,16 @@ Be SPECIFIC. No vague language. Use exact figures from the headlines.
 If headlines don't have specifics, use your training knowledge for known facts.`;
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://content-os.app',
+        'X-Title': 'Content OS',
+      },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
         max_tokens: 450,
         temperature: 0.1,
         messages: [
@@ -110,7 +115,7 @@ If headlines don't have specifics, use your training knowledge for known facts.`
     const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
     return data.choices?.[0]?.message?.content?.trim() ?? '';
   } catch (err) {
-    log.warn('Groq synthesis failed', { error: (err as Error).message });
+    log.warn('OpenRouter synthesis failed', { error: (err as Error).message });
     return '';
   }
 }
@@ -118,15 +123,20 @@ If headlines don't have specifics, use your training knowledge for known facts.`
 // ─── INSIGHT EXTRACTION ──────────────────────────────────────
 
 async function extractInsight(rawResearch: string, topic: string): Promise<string> {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (!groqKey || !rawResearch) return '';
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || !rawResearch) return '';
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://content-os.app',
+        'X-Title': 'Content OS',
+      },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
         max_tokens: 250,
         temperature: 0.2,
         messages: [
@@ -162,7 +172,7 @@ STRICT CONTENT RULES — these override everything:
     if (insight) log.info('Insight extracted', { chars: insight.length });
     return insight;
   } catch (err) {
-    log.warn('Insight extraction failed', { error: (err as Error).message });
+    log.warn('OpenRouter insight extraction failed', { error: (err as Error).message });
     return '';
   }
 }
