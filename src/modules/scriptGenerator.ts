@@ -19,7 +19,6 @@ import {
 import { SCRIPT_CONFIG, SYSTEM_CONFIG } from '../config';
 import { callClaudeWithFallback } from '../infra/aiClient';
 import { createLogger } from '../infra/logger';
-import { researchTopic } from '../infra/topicResearcher';
 
 const log = createLogger('ScriptGenerator');
 
@@ -257,20 +256,15 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
 
   const mockFallback = isIndian ? MOCK_SCRIPT_JSON_HINGLISH : MOCK_SCRIPT_JSON_ENGLISH;
 
-  // Research the topic for accurate, specific facts (uses Groq web search)
-  let researchContext = '';
-  if (!SYSTEM_CONFIG.useMocks) {
-    log.info('Researching topic', { topic: request.topic });
-    researchContext = await researchTopic(request.topic, request.niche);
-    if (researchContext) log.info('Research ready', { chars: researchContext.length });
-  }
+  const researchContext = request.researchBrief || '';
+  if (researchContext) log.info('Using pre-researched brief', { chars: researchContext.length });
 
-  async function attemptGeneration(temperature: number): Promise<{ script: Script; tokensUsed: number; model: string } | null> {
+  async function attemptGeneration(temperature: number): Promise<{ script: Script; tokensUsed: number; model: string }> {
     const response = await callClaudeWithFallback(
       {
-        systemPrompt: buildSystemPrompt(request.niche, request.tone, language),
+        systemPrompt: buildSystemPrompt(request.niche, request.tone, language, researchContext),
         prompt: buildScriptPrompt(request, structure, language, researchContext),
-        maxTokens: 1200,
+        maxTokens: 800,
         temperature,
       },
       () => JSON.stringify(mockFallback)
@@ -283,15 +277,24 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
     }
 
     const segs = buildSegmentsFromJSON(parsed, structure, request.hook, language);
+
     const ft = segs.map(s => s.text).join(' ');
     const dur = segs.reduce((sum, s) => sum + s.estimatedDurationSeconds, 0);
 
-    // Duration validation: must be 80%–120% of target
+    // DECISION: soft duration warn — real content > duration perfection
     const minDur = request.targetDurationSeconds * 0.8;
     const maxDur = request.targetDurationSeconds * 1.2;
     if (dur < minDur || dur > maxDur) {
-      log.warn('Script duration out of range', { dur, minDur, maxDur });
-      return null;
+      log.warn('Script duration out of range — keeping script', {
+        dur, minDur, maxDur, targetDuration: request.targetDurationSeconds,
+      });
+    }
+
+    const wordCount = ft.split(/\s+/).filter(Boolean).length;
+    if (wordCount > 200) {
+      log.warn('Script word count over 200 — keeping script (70-80s is acceptable)', {
+        wordCount, targetDuration: request.targetDurationSeconds,
+      });
     }
 
     const s: Script = {
@@ -300,40 +303,14 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
       segments: segs,
       fullText: ft,
       totalDurationSeconds: Math.round(dur * 10) / 10,
-      wordCount: ft.split(/\s+/).length,
+      wordCount,
       topic: request.topic,
       fingerprint: generateScriptFingerprint(ft, request.topic),
     };
     return { script: s, tokensUsed: response.tokensUsed, model: response.model };
   }
 
-  let attempt = await attemptGeneration(0.5);
-  if (!attempt) {
-    log.warn('Script duration out of range on first attempt — regenerating once');
-    attempt = await attemptGeneration(0.6);
-  }
-
-  // If both attempts fail duration check, fall back to mock
-  if (!attempt) {
-    log.warn('Script duration validation failed twice — using mock fallback');
-    const segs = buildSegmentsFromJSON(mockFallback, structure, request.hook, language);
-    const ft = segs.map(s => s.text).join(' ');
-    const dur = segs.reduce((sum, s) => sum + s.estimatedDurationSeconds, 0);
-    attempt = {
-      script: {
-        id: uuidv4(),
-        hook: request.hook,
-        segments: segs,
-        fullText: ft,
-        totalDurationSeconds: Math.round(dur * 10) / 10,
-        wordCount: ft.split(/\s+/).length,
-        topic: request.topic,
-        fingerprint: generateScriptFingerprint(ft, request.topic),
-      },
-      tokensUsed: 0,
-      model: 'mock',
-    };
-  }
+  const attempt = await attemptGeneration(0.5);
 
   const script = attempt.script;
 
@@ -356,7 +333,10 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
 
 // ─── PROMPT BUILDERS ────────────────────────────────────────
 
-function buildSystemPrompt(niche: string, tone: string, language = 'english'): string {
+function buildSystemPrompt(niche: string, tone: string, language = 'english', researchBrief = ''): string {
+  const researchInjection = researchBrief
+    ? `Use this verified research to ground your script with real facts:\n${researchBrief}\nDo not invent statistics. Only use figures from the research above or well-known verified facts.\n\n`
+    : '';
   const jsonSchema = `Return ONLY valid JSON — no markdown, no explanation, no extra text:
 {
   "hook": "single shocking opening line",
@@ -364,7 +344,7 @@ function buildSystemPrompt(niche: string, tone: string, language = 'english'): s
   "scenes": [
     {
       "text": "exact spoken narration (1-2 sentences)",
-      "visual_query": "searchable English stock footage description: subject + action + mood",
+      "visual_query": "searchable English stock footage — MUST match the topic and what is literally being said in this segment, not generic finance",
       "visual_type": "video",
       "emotion": "shock|fear|curiosity|tension|surprise|confidence|urgency|hope"
     }
@@ -375,11 +355,32 @@ function buildSystemPrompt(niche: string, tone: string, language = 'english'): s
     ? `CONTENT STYLE: ${niche} angle — use to frame WHY the viewer cares, NOT to restrict the topic`
     : '';
 
+  const absoluteRules = `ABSOLUTE RULES — violating these means the output is wrong:
+1. NEVER mention Dafabet, Dream11, MPL, or any betting/fantasy app
+2. NEVER mention prize money from contests
+3. NEVER suggest viewers bet or predict for money
+4. If research mentions betting data, completely ignore it
+5. Focus ONLY on: which team will win and WHY based on player form, team strength, past IPL record, captain strategy
+
+`;
+
   if (language === 'hinglish' || language === 'hindi') {
-    return `You are a real Indian content creator making viral 60-second videos on ANY topic — war, politics, economy, sports, technology. You explain it like a friend over chai, not a news anchor.
+    return `${absoluteRules}${researchInjection}You are a real Indian content creator making viral 60-second videos on ANY topic — war, politics, economy, sports, technology. You explain it like a friend over chai, not a news anchor.
 
 TONE: ${tone}
 ${styleHint}
+
+STRICT LENGTH RULE: Total script MUST be 60 seconds maximum.
+That means 150 words MAXIMUM across all segments combined.
+Each segment: 1-2 sentences only. Short. Punchy. No padding.
+
+TONE RULES — mandatory:
+- Write like a real Indian person talking to a friend
+- Short sentences. Max 10 words per sentence.
+- No formal words: never use 'however', 'therefore', 'it is essential', 'according to', 'various'
+- Use contractions: don't, won't, can't
+- Energy and excitement — not dry analysis
+- Every segment must feel urgent and interesting
 
 YOUR JOB: Use the RESEARCHED FACTS below to write the script. Do NOT use generic content. Every scene must use real names, real numbers, real events from the research.
 
@@ -397,10 +398,15 @@ it is important to note, in conclusion, to summarize, this means that, moving fo
 BAD: "It is crucial to understand the significant implications of this development."
 GOOD: "Yaar, 40 lakh jobs gaye. Ek hi hafte mein. Aur koi nahi bola."
 
-VISUAL QUERY (always English — exact Pexels search terms for THIS specific topic):
+VISUAL QUERY — CRITICAL RULE:
+visual_query MUST be directly related to the topic. Never use generic finance or stock market visuals unless the topic is specifically about finance or stocks. Match the visual to what is literally being said in that segment.
+BAD: "stock market graph falling"
+GOOD (IPL topic): "cricket stadium crowd cheering IPL match"
+GOOD (AI topic): "robot hand typing keyboard futuristic office"
+GOOD (jobs topic): "people standing in job queue office building"
 - Name real people and places: "modi parliament speech crowd", "ukraine war soldiers trench"
 - NOT generic: NEVER "people worried" — YES "farmers protest delhi highway tractors"
-- 5-8 English words
+- Always in English, 5-8 words
 
 SCENE STRUCTURE (exactly 5 scenes):
 1. HOOK (3s): One jaw-dropping line — stops the scroll cold
@@ -412,10 +418,22 @@ SCENE STRUCTURE (exactly 5 scenes):
 ${jsonSchema}`;
   }
 
-  return `You are a real person making viral short-form videos on ANY topic — war, AI, economy, politics, science, sports. You explain it like a smart friend who just read everything about it.
+  return `${absoluteRules}${researchInjection}You are a real person making viral short-form videos on ANY topic — war, AI, economy, politics, science, sports. You explain it like a smart friend who just read everything about it.
 
 TONE: ${tone}
 ${styleHint}
+
+STRICT LENGTH RULE: Total script MUST be 60 seconds maximum.
+That means 150 words MAXIMUM across all segments combined.
+Each segment: 1-2 sentences only. Short. Punchy. No padding.
+
+TONE RULES — mandatory:
+- Write like a real Indian person talking to a friend
+- Short sentences. Max 10 words per sentence.
+- No formal words: never use 'however', 'therefore', 'it is essential', 'according to', 'various'
+- Use contractions: don't, won't, can't
+- Energy and excitement — not dry analysis
+- Every segment must feel urgent and interesting
 
 YOUR JOB: Use the RESEARCHED FACTS below. Every scene must be specific to THIS exact topic — real names, real numbers, real events. Zero generic content.
 
@@ -435,7 +453,12 @@ the fact of the matter, at the end of the day, moving forward
 BAD: "This development has significant implications for the global economy."
 GOOD: "47 million jobs could vanish. By next year. And nobody's talking about it."
 
-VISUAL QUERY (Pexels stock footage search terms — specific to THIS topic):
+VISUAL QUERY — CRITICAL RULE:
+visual_query for each segment MUST be directly related to the topic. Never use generic finance or stock market visuals unless the topic is specifically about finance or stocks. Match the visual to what is literally being said in that segment.
+BAD: "stock market graph falling"
+GOOD (IPL topic): "cricket stadium crowd cheering IPL match"
+GOOD (AI topic): "robot hand typing keyboard futuristic office"
+GOOD (jobs topic): "people standing in job queue office building"
 - Real people: "donald trump signing executive order white house", "elon musk tesla factory"
 - Real places/events: "ukraine war frontline soldiers tanks", "india pakistan border military tension"
 - NOT generic: NEVER "business people meeting" — YES "silicon valley tech layoffs workers"
@@ -464,14 +487,21 @@ function buildScriptPrompt(
     ? `\nRESEARCHED FACTS — use these specific details, numbers, and names in the script:\n${researchContext}\n`
     : '';
 
+  const minWordCount = Math.floor(request.targetDurationSeconds * 2.5);
+  const wordCountBlock = `WORD COUNT REQUIREMENT: This script MUST contain at least ${minWordCount} words total across all segments.
+Current target: ${request.targetDurationSeconds} seconds = ${minWordCount} words minimum.
+Each segment should be 2-4 sentences, not 1 sentence.`;
+
   if (isIndian) {
     return `TOPIC: ${request.topic}
 NICHE: ${request.niche}
 DURATION: 60 seconds
 LANGUAGE: Hinglish (Hindi + English mix)
+${wordCountBlock}
 ${keyPointsStr}${researchBlock}
 Generate exactly 5 scenes. Use the researched facts for accuracy — real numbers, real names, real events.
-Spoken text in Hinglish. visual_query MUST be in English and be specific to this exact topic.
+Spoken text in Hinglish. visual_query MUST be in English and specific to this exact topic: "${request.topic}".
+Every visual_query must match what is literally being said in that segment — never default to stock market or finance visuals unless this topic is specifically about finance.
 Return ONLY the JSON object. No markdown. No explanation.`;
   }
 
@@ -479,9 +509,10 @@ Return ONLY the JSON object. No markdown. No explanation.`;
 HOOK (already written): "${request.hook.text}"
 TARGET DURATION: ${Math.round(structure.totalDuration)} seconds
 NICHE: ${request.niche}
+${wordCountBlock}
 ${keyPointsStr}${researchBlock}
 Generate 5-6 scenes that follow from the hook and build to a CTA.
-Use the researched facts — specific numbers, names, events. Each scene 1-2 punchy sentences.
-visual_query must be specific to THIS topic, not generic finance footage.
+Use the researched facts — specific numbers, names, events. Each segment 2-4 sentences.
+Every visual_query MUST match the topic "${request.topic}" and what is literally being said in that segment — never use generic finance or stock market visuals unless this topic is specifically about finance.
 Return ONLY the JSON object. No markdown. No explanation.`;
 }

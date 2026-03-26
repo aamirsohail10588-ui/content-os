@@ -88,7 +88,13 @@ async function searchVideoWithFallback(query: string, apiKey: string): Promise<s
 
   // Try first word only (usually a noun)
   url = await searchPexelsVideo(words[0], apiKey);
-  return url;
+  if (url) return url;
+
+  // Final: append ' video' to original query to force video results
+  if (!query.trim().toLowerCase().endsWith('video')) {
+    url = await searchPexelsVideo(query.trim() + ' video', apiKey);
+  }
+  return url ?? null;
 }
 
 // ─── PEXELS IMAGE SEARCH ─────────────────────────────────────
@@ -178,15 +184,24 @@ export async function fetchStockClip(
   }
 }
 
-// Fetch clips for all segments in parallel (with graceful failure)
+// Fetch clips for all segments in parallel (video only — never images)
+// All returned paths are .mp4 to avoid SAR mismatch in FFmpeg concat.
 export async function fetchStockClips(
   segments: Pick<ScriptSegment, 'visual_query' | 'visual_type'>[]
 ): Promise<(string | null)[]> {
-  return Promise.all(
+  // Always fetch video regardless of visual_type — images cause SAR mismatch in FFmpeg
+  const results = await Promise.all(
     segments.map(seg => {
       if (!seg.visual_query) return Promise.resolve(null);
-      const type = seg.visual_type === 'image' ? 'image' : 'video';
-      return fetchStockClip(seg.visual_query, type).catch(() => null);
+      return fetchStockClip(seg.visual_query, 'video').catch(() => null);
     })
   );
+
+  // Fill nulls with the nearest previous valid video clip so FFmpeg never
+  // mixes video + lavfi sources in a way that causes SAR/format mismatches
+  let lastClip: string | null = null;
+  return results.map(clip => {
+    if (clip) { lastClip = clip; return clip; }
+    return lastClip;
+  });
 }

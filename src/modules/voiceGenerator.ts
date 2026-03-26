@@ -37,14 +37,27 @@ async function generateSilentAudio(audioPath: string, durationSeconds: number): 
 
 // ─── EDGE TTS (FREE) ─────────────────────────────────────────
 
-async function generateEdgeTTS(text: string, audioPath: string, voice = 'en-US-GuyNeural', language = 'english'): Promise<void> {
+async function generateEdgeTTS(text: string, audioPath: string, voice = 'en-IN-PrabhatNeural', language = 'english', rate = ''): Promise<void> {
   const { MsEdgeTTS, OUTPUT_FORMAT } = await import('msedge-tts');
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
 
-  // Use plain text — the library wraps it in SSML with the configured voice.
-  // Custom SSML with <prosody> was producing 0-byte files on some Edge TTS endpoints.
-  const { audioStream } = tts.toStream(text);
+  // When rate is specified, wrap in SSML <prosody> for speed control.
+  // Plain text is used as fallback path — some Edge TTS endpoints reject SSML.
+  let content: string;
+  if (rate) {
+    const xmlLang = voice.split('-').slice(0, 2).join('-');
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    content = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${xmlLang}"><voice name="${voice}"><prosody rate="${rate}">${escaped}</prosody></voice></speak>`;
+  } else {
+    content = text;
+  }
+
+  const { audioStream } = tts.toStream(content);
   await new Promise<void>((resolve, reject) => {
     const writer = fs.createWriteStream(audioPath);
     audioStream.pipe(writer);
@@ -83,7 +96,7 @@ async function generateElevenLabsTTS(text: string, audioPath: string, voiceId: s
 // Voice configs per language/gender
 const VOICE_CONFIG: Record<string, Record<string, { voiceId: string; model: string; edgeVoice: string }>> = {
   english: {
-    male:   { voiceId: 'pNInz6obpgDQGcFmaJgB', model: 'eleven_turbo_v2_5',    edgeVoice: 'en-US-GuyNeural' },
+    male:   { voiceId: 'pNInz6obpgDQGcFmaJgB', model: 'eleven_turbo_v2_5',    edgeVoice: 'en-IN-PrabhatNeural' },
     female: { voiceId: '21m00Tcm4TlvDq8ikWAM', model: 'eleven_turbo_v2_5',    edgeVoice: 'en-US-JennyNeural' },
   },
   hindi: {
@@ -127,14 +140,26 @@ export async function generateVoice(
   if (isIndian) {
     try {
       log.info('Edge TTS (Indian) request', { voice: voiceCfg.edgeVoice, lang, chars: fullText.length });
-      await generateEdgeTTS(fullText, audioPath, voiceCfg.edgeVoice, lang);
+      await generateEdgeTTS(fullText, audioPath, voiceCfg.edgeVoice, lang, '+30%');
       const sizeBytes = fs.existsSync(audioPath) ? fs.statSync(audioPath).size : 0;
       if (sizeBytes > 1000) {
         log.info('Edge TTS audio saved', { audioPath, sizeBytes, generationMs: Date.now() - start });
         return { audioPath, durationSeconds: script.totalDurationSeconds, sizeBytes, voiceId: voiceCfg.edgeVoice, model: 'edge-tts', generationMs: Date.now() - start, isMock: false };
       }
     } catch (err) {
-      log.warn('Edge TTS (Indian) failed — trying ElevenLabs', { error: (err as Error).message });
+      log.warn('Edge TTS (Indian) primary failed — trying hi-IN-MadhurNeural', { error: (err as Error).message });
+    }
+    // Second fallback: hi-IN-MadhurNeural (Hindi male — works for both hindi and hinglish)
+    try {
+      log.info('Edge TTS (Indian) second fallback', { voice: 'hi-IN-MadhurNeural', lang, chars: fullText.length });
+      await generateEdgeTTS(fullText, audioPath, 'hi-IN-MadhurNeural', lang, '+30%');
+      const sizeBytes = fs.existsSync(audioPath) ? fs.statSync(audioPath).size : 0;
+      if (sizeBytes > 1000) {
+        log.info('Edge TTS audio saved (second fallback)', { audioPath, sizeBytes, generationMs: Date.now() - start });
+        return { audioPath, durationSeconds: script.totalDurationSeconds, sizeBytes, voiceId: 'hi-IN-MadhurNeural', model: 'edge-tts', generationMs: Date.now() - start, isMock: false };
+      }
+    } catch (err) {
+      log.warn('Edge TTS (Indian) second fallback failed — trying ElevenLabs', { error: (err as Error).message });
     }
   }
 

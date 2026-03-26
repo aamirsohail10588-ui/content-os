@@ -220,8 +220,9 @@ function runRealFfmpeg(
 
     // ── 1. BASE LAYER — stock footage or dark background ──────
     if (hasStockClip) {
-      // Scale to portrait, force yuv420p for consistent color space, then light scrim
-      f += `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},format=yuv420p,setpts=PTS-STARTPTS`;
+      // Scale to portrait, normalize SAR to 1:1 (prevents SAR mismatch in concat),
+      // force yuv420p for consistent color space, then light scrim
+      f += `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuv420p,setpts=PTS-STARTPTS`;
       // Very light scrim — just enough to make white text readable, keeps footage colors vivid
       f += `,drawbox=x=0:y=0:w=${W}:h=${H}:color=0x000000@0.28:t=fill`;
     } else {

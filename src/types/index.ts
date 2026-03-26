@@ -25,6 +25,7 @@ export enum VideoFormat {
 
 export enum PipelineStage {
   DEDUP_CHECK = 'dedup_check',
+  TOPIC_RESEARCH = 'topic_research',
   HOOK_GENERATION = 'hook_generation',
   SCRIPT_GENERATION = 'script_generation',
   VISUAL_MAPPING = 'visual_mapping',
@@ -85,6 +86,7 @@ export interface HookGenerationRequest {
   variantCount: number;
   excludePatterns?: HookPattern[];
   voiceLanguage?: string;
+  researchBrief?: string;
 }
 
 export interface HookGenerationResult {
@@ -126,6 +128,7 @@ export interface ScriptGenerationRequest {
   targetDurationSeconds: number;
   keyPoints?: string[];
   voiceLanguage?: string;
+  researchBrief?: string;
 }
 
 export interface ScriptGenerationResult {
@@ -226,6 +229,7 @@ export interface PipelineCheckpoint {
     visuals?: VisualInstruction[];
     captions?: CaptionEntry[];
     assemblyResult?: VideoAssemblyResult;
+    researchBrief?: string;
   };
   timestamp: Date;
 }

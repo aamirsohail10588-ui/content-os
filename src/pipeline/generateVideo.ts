@@ -29,6 +29,7 @@ import { publishVideo, PublishResult } from '../modules/publisher';
 import { checkDuplicate, registerContent } from '../registry/contentRegistry';
 import { createLogger } from '../infra/logger';
 import { redis } from '../infra/redis';
+import { researchTopic } from '../infra/topicResearcher';
 import { experimentEngine, HOOK_AB_EXPERIMENT } from '../core/engines';
 
 const log = createLogger('Pipeline');
@@ -130,6 +131,7 @@ export async function generateVideo(
     updatedAt: new Date(),
   };
 
+  let researchBrief = '';
   let hook: Hook | undefined;
   let script: Script | undefined;
   let videoResult: VideoAssemblyResult | undefined;
@@ -151,6 +153,17 @@ export async function generateVideo(
     });
     stagesCompleted.push(PipelineStage.DEDUP_CHECK);
 
+    // ─── STAGE 1.5: TOPIC RESEARCH ──────────────────────────
+    researchBrief = await executeStage(PipelineStage.TOPIC_RESEARCH, jobId, async () => {
+      const brief = await researchTopic(topic, config.niche);
+      if (!brief) log.warn('Topic research returned empty — continuing without research', { jobId });
+      await saveCheckpoint(jobId, PipelineStage.TOPIC_RESEARCH, { researchBrief: brief });
+      return brief;
+    }).catch((err: Error) => {
+      log.warn('Topic research stage failed — continuing without research', { jobId, error: err.message });
+      return '';
+    });
+
     // ─── STAGE 2: HOOK GENERATION ───────────────────────────
     hook = await executeStage(PipelineStage.HOOK_GENERATION, jobId, async () => {
       const hookResult = await generateHooks({
@@ -160,11 +173,12 @@ export async function generateVideo(
         targetDurationSeconds: 5,
         variantCount: config.maxVariants,
         voiceLanguage: (config as any).voiceLanguage || 'english',
+        researchBrief: researchBrief || undefined,
       });
 
       const bestHook = await selectBestHook(hookResult.hooks);
 
-      await saveCheckpoint(jobId, PipelineStage.HOOK_GENERATION, { hook: bestHook });
+      await saveCheckpoint(jobId, PipelineStage.HOOK_GENERATION, { hook: bestHook, researchBrief });
       return bestHook;
     });
     stagesCompleted.push(PipelineStage.HOOK_GENERATION);
@@ -178,6 +192,7 @@ export async function generateVideo(
         tone: config.tone || 'authoritative_yet_accessible',
         targetDurationSeconds: config.targetDurationSeconds,
         voiceLanguage: (config as any).voiceLanguage || 'english',
+        researchBrief,
       });
 
       await saveCheckpoint(jobId, PipelineStage.SCRIPT_GENERATION, {

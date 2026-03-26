@@ -115,16 +115,76 @@ If headlines don't have specifics, use your training knowledge for known facts.`
   }
 }
 
+// ─── INSIGHT EXTRACTION ──────────────────────────────────────
+
+async function extractInsight(rawResearch: string, topic: string): Promise<string> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey || !rawResearch) return '';
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 250,
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a viral content strategist for Indian short-form video.
+Convert raw research into a content insight brief.
+
+Output exactly 4 lines:
+TENSION: [what is the conflict, contradiction, or surprising fact]
+CURIOSITY_GAP: [what viewers don't know but will want to]
+EMOTIONAL_HOOK: [fear / shock / curiosity / pride / outrage — pick one + why]
+SCRIPT_ANGLE: [one sentence — the exact angle this video should take]
+
+Be specific. Use real numbers from research. No generic statements.
+
+STRICT CONTENT RULES — these override everything:
+- NEVER suggest betting, gambling, or fantasy sports as the angle
+- NEVER mention Dafabet, Dream11, or any betting platform
+- NEVER use financial loss/gain from betting as emotional hook
+- If research contains betting data, IGNORE it completely
+- Focus ONLY on: team analysis, player performance, match predictions, fan emotions, cricket strategy`,
+          },
+          { role: 'user', content: `Research:\n${rawResearch}\n\nTopic: "${topic}"` },
+        ],
+      }),
+      signal: AbortSignal.timeout(12_000),
+    });
+
+    if (!response.ok) return '';
+    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    const insight = data.choices?.[0]?.message?.content?.trim() ?? '';
+    if (insight) log.info('Insight extracted', { chars: insight.length });
+    return insight;
+  } catch (err) {
+    log.warn('Insight extraction failed', { error: (err as Error).message });
+    return '';
+  }
+}
+
 // ─── PUBLIC API ───────────────────────────────────────────────
 
 export async function researchTopic(topic: string, niche: string): Promise<string> {
   try {
     log.info('Starting topic research', { topic: topic.slice(0, 60) });
     const headlines = await fetchNewsHeadlines(topic);
-    const research = await synthesizeResearch(headlines, topic);
-    if (research) log.info('Research complete', { chars: research.length, headlines: headlines.length });
-    else log.warn('Research returned empty', { topic: topic.slice(0, 50) });
-    return research;
+    const rawResearch = await synthesizeResearch(headlines, topic);
+    if (!rawResearch) {
+      log.warn('Research returned empty', { topic: topic.slice(0, 50) });
+      return '';
+    }
+    log.info('Raw research complete', { chars: rawResearch.length, headlines: headlines.length });
+    const insight = await extractInsight(rawResearch, topic);
+    const combined = insight
+      ? `RESEARCH:\n${rawResearch}\n\nINSIGHT:\n${insight}`
+      : `RESEARCH:\n${rawResearch}`;
+    log.info('Research + insight ready', { totalChars: combined.length });
+    return combined;
   } catch (err) {
     log.warn('researchTopic failed', { error: (err as Error).message });
     return '';

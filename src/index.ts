@@ -15,8 +15,6 @@ import { createLogger } from './infra/logger';
 
 // Phase 4 engines — singletons from core/engines.ts
 import { decisionEngine, evolutionEngine, experimentEngine, portfolioEngine, HOOK_AB_EXPERIMENT } from './core/engines';
-import { PerformanceEntry } from './modules/decisionEngine';
-import { PerformanceData } from './modules/evolutionEngine';
 import { AllocationStrategy } from './modules/portfolioEngine';
 
 const log = createLogger('Main');
@@ -113,30 +111,12 @@ async function main(): Promise<void> {
 
   header('PHASE 4B: Decision Engine');
 
-  const mockPlatforms = ['youtube', 'instagram', 'tiktok'];
-  const mockPatterns = ['shocking_stat', 'curiosity_gap', 'contrarian', 'bold_claim', 'story_open'];
-  const performanceEntries: PerformanceEntry[] = [];
+  // Performance data comes from real pipeline events via performanceStore
+  // Phase 4 engines receive live observations through core/engines.ts singletons
+  // Run npm run weights:update to compute hook weights from real data
 
-  for (let i = 0; i < 20; i++) {
-    const hookPattern = mockPatterns[i % mockPatterns.length];
-    const platform = mockPlatforms[i % mockPlatforms.length];
-    const engagement = hookPattern === 'shocking_stat' ? 0.65 + Math.random() * 0.2
-                     : hookPattern === 'curiosity_gap'  ? 0.55 + Math.random() * 0.2
-                     : 0.2 + Math.random() * 0.25;
-    performanceEntries.push({
-      videoId: `vid_${i}`,
-      topic: FINANCE_TOPICS[i % FINANCE_TOPICS.length],
-      platform,
-      engagement,
-      views: Math.round(5000 + Math.random() * 20000),
-      hookPattern,
-      retentionAvg: 0.35 + Math.random() * 0.3,
-    });
-  }
-
-  const { decisions } = decisionEngine.analyze(performanceEntries);
-  console.log(`\n  Analyzed ${performanceEntries.length} performance entries`);
-  console.log(`  Generated ${decisions.length} decisions`);
+  const { decisions } = decisionEngine.analyze([]);
+  console.log(`\n  Generated ${decisions.length} decisions`);
 
   const autoExec = decisionEngine.getAutoExecutable();
   const pending = decisionEngine.getPendingReview();
@@ -162,18 +142,7 @@ async function main(): Promise<void> {
 
   header('PHASE 4C: Evolution Engine');
 
-  const evoData: PerformanceData[] = performanceEntries.map(e => ({
-    topic: e.topic,
-    hookPattern: e.hookPattern,
-    platform: e.platform,
-    engagement: e.engagement,
-    views: e.views,
-    retentionAvg: e.retentionAvg,
-    duration: 30 + Math.round(Math.random() * 60),
-    hasCTA: Math.random() > 0.4,
-  }));
-
-  const evoResult = evolutionEngine.evolve(evoData, decisions);
+  const evoResult = evolutionEngine.evolve([], decisions);
 
   console.log(`\n  Evolution generation: ${evoResult.generation}`);
   console.log(`  Hook weights learned:`);

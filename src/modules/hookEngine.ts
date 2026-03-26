@@ -128,7 +128,9 @@ async function generateSingleHook(
   try {
     const response = await callClaudeWithFallback(
       {
-        systemPrompt: isIndian ? buildHinglishHookSystemPrompt() : buildSystemPrompt(request.niche, request.tone),
+        systemPrompt: isIndian
+          ? buildHinglishHookSystemPrompt(request.researchBrief)
+          : buildSystemPrompt(request.niche, request.tone, request.researchBrief),
         prompt: buildHookPrompt(request.topic, pattern, request.targetDurationSeconds),
         maxTokens: 150,
         temperature,
@@ -271,12 +273,15 @@ export async function generateHooks(request: HookGenerationRequest): Promise<Hoo
 
 // ─── PROMPT BUILDERS ────────────────────────────────────────
 
-function buildSystemPrompt(niche: string, tone: string): string {
+function buildSystemPrompt(niche: string, tone: string, researchBrief?: string): string {
+  const researchBlock = researchBrief
+    ? `\nUse ONLY these verified facts for any statistics in the hook:\n${researchBrief.slice(0, 300)}\nNever invent percentages or statistics.\n`
+    : '';
   return `You are an expert short-form video hook writer specializing in ${niche} content.
 Your tone is ${tone}.
 You write hooks that stop the scroll in the first 2-3 seconds.
 Every hook must create an immediate emotional reaction: curiosity, shock, or urgency.
-
+${researchBlock}
 RULES — follow exactly:
 - Maximum 8 words total
 - Must start with a number (e.g. "73%", "3") or a provocative word (e.g. "Stop", "Why", "Your", "Nobody")
@@ -284,12 +289,17 @@ RULES — follow exactly:
 - Be specific. Use numbers and data where possible.
 - No filler words. Every word must earn its place.
 
+NEVER generate hooks about betting, gambling, money loss, or fantasy sports. Focus on cricket performance, team rivalry, player skill, fan passion.
+
 Output ONLY the hook text, nothing else. No quotes. No explanation.`;
 }
 
-function buildHinglishHookSystemPrompt(): string {
+function buildHinglishHookSystemPrompt(researchBrief?: string): string {
+  const researchBlock = researchBrief
+    ? `\nUse ONLY these verified facts for any statistics in the hook:\n${researchBrief.slice(0, 300)}\nNever invent percentages or statistics.\n`
+    : '';
   return `You are a viral Indian content creator. Write ONE hook line in Hinglish (Hindi + English mix).
-
+${researchBlock}
 RULES:
 - Max 12 words total
 - Must be SPECIFIC to the given topic — mention real names, real numbers
@@ -300,6 +310,8 @@ RULES:
 
 BAD (generic): "India mein 90% log yeh galti karte hain"
 GOOD (specific): "Yaar, Trump ke ek tweet se Sensex 2000 points gir gaya"
+
+NEVER generate hooks about betting, gambling, money loss, or fantasy sports. Focus on cricket performance, team rivalry, player skill, fan passion.
 
 Output ONLY the hook text. No quotes. No explanation.`;
 }
