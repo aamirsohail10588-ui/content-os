@@ -262,7 +262,7 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
   async function attemptGeneration(temperature: number): Promise<{ script: Script; tokensUsed: number; model: string }> {
     const response = await callClaudeWithFallback(
       {
-        systemPrompt: buildSystemPrompt(request.niche, request.tone, language, researchContext),
+        systemPrompt: buildSystemPrompt(request.niche, request.tone, language, researchContext, request.trendContext),
         prompt: buildScriptPrompt(request, structure, language, researchContext),
         maxTokens: 600,
         temperature,
@@ -354,7 +354,13 @@ export async function generateScript(request: ScriptGenerationRequest): Promise<
 
 // ─── PROMPT BUILDERS ────────────────────────────────────────
 
-function buildSystemPrompt(niche: string, tone: string, language = 'english', researchBrief = ''): string {
+function buildSystemPrompt(
+  niche: string,
+  tone: string,
+  language = 'english',
+  researchBrief = '',
+  trendContext?: ScriptGenerationRequest['trendContext']
+): string {
   const researchInjection = researchBrief
     ? `Use this verified research to ground your script with real facts:\n${researchBrief}\nDo not invent statistics. Only use figures from the research above or well-known verified facts.\n\n`
     : '';
@@ -375,6 +381,9 @@ function buildSystemPrompt(niche: string, tone: string, language = 'english', re
   const styleHint = niche && niche !== 'general'
     ? `CONTENT STYLE: ${niche} angle — use to frame WHY the viewer cares, NOT to restrict the topic`
     : '';
+  const trendHint = trendContext
+    ? `TREND CONTEXT: This topic is currently trending on ${trendContext.platform} (${trendContext.trendLabel}) with velocity ${trendContext.velocity}. Keep the opening highly timely and conversational.\n`
+    : '';
 
   const absoluteRules = `ABSOLUTE RULES — violating these means the output is wrong:
 1. NEVER mention Dafabet, Dream11, MPL, or any betting/fantasy app
@@ -386,7 +395,7 @@ function buildSystemPrompt(niche: string, tone: string, language = 'english', re
 `;
 
   if (language === 'hinglish' || language === 'hindi') {
-    return `${absoluteRules}${researchInjection}You are a real Indian content creator making viral 60-second videos on ANY topic — war, politics, economy, sports, technology. You explain it like a friend over chai, not a news anchor.
+    return `${absoluteRules}${researchInjection}${trendHint}You are a real Indian content creator making viral 60-second videos on ANY topic — war, politics, economy, sports, technology. You explain it like a friend over chai, not a news anchor.
 
 TONE: ${tone}
 ${styleHint}
@@ -439,7 +448,7 @@ SCENE STRUCTURE (exactly 5 scenes):
 ${jsonSchema}`;
   }
 
-  return `${absoluteRules}${researchInjection}You are a real person making viral short-form videos on ANY topic — war, AI, economy, politics, science, sports. You explain it like a smart friend who just read everything about it.
+  return `${absoluteRules}${researchInjection}${trendHint}You are a real person making viral short-form videos on ANY topic — war, AI, economy, politics, science, sports. You explain it like a smart friend who just read everything about it.
 
 TONE: ${tone}
 ${styleHint}
@@ -507,6 +516,9 @@ function buildScriptPrompt(
   const researchBlock = researchContext
     ? `\nRESEARCHED FACTS — use these specific details, numbers, and names in the script:\n${researchContext}\n`
     : '';
+  const trendBlock = request.trendContext
+    ? `\nTREND CONTEXT:\n- Platform: ${request.trendContext.platform}\n- Velocity: ${request.trendContext.velocity}\n- Category: ${request.trendContext.category}\n- Trend label: ${request.trendContext.trendLabel}\nUse this context to improve hook relevance and timing.\n`
+    : '';
 
   const minWordCount = Math.floor(request.targetDurationSeconds * 2.5);
   const wordCountBlock = `WORD COUNT REQUIREMENT: This script MUST contain at least ${minWordCount} words total across all segments.
@@ -519,7 +531,7 @@ NICHE: ${request.niche}
 DURATION: 60 seconds
 LANGUAGE: Hinglish (Hindi + English mix)
 ${wordCountBlock}
-${keyPointsStr}${researchBlock}
+${keyPointsStr}${researchBlock}${trendBlock}
 Generate exactly 5 scenes. Use the researched facts for accuracy — real numbers, real names, real events.
 Spoken text in Hinglish. visual_query MUST be in English and specific to this exact topic: "${request.topic}".
 Every visual_query must match what is literally being said in that segment — never default to stock market or finance visuals unless this topic is specifically about finance.
@@ -531,7 +543,7 @@ HOOK (already written): "${request.hook.text}"
 TARGET DURATION: ${Math.round(structure.totalDuration)} seconds
 NICHE: ${request.niche}
 ${wordCountBlock}
-${keyPointsStr}${researchBlock}
+${keyPointsStr}${researchBlock}${trendBlock}
 Generate 5-6 scenes that follow from the hook and build to a CTA.
 Use the researched facts — specific numbers, names, events. Each segment 2-4 sentences.
 Every visual_query MUST match the topic "${request.topic}" and what is literally being said in that segment — never use generic finance or stock market visuals unless this topic is specifically about finance.

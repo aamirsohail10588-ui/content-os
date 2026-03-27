@@ -24,6 +24,7 @@ export enum VideoFormat {
 }
 
 export enum PipelineStage {
+  TREND_INTELLIGENCE = 'trend_intelligence',
   DEDUP_CHECK = 'dedup_check',
   TOPIC_RESEARCH = 'topic_research',
   HOOK_GENERATION = 'hook_generation',
@@ -64,6 +65,19 @@ export interface AccountIdentity {
   niche: string;
   tone: string;
   audienceProfile: string;
+}
+
+export interface Trend {
+  topic: string;
+  platform: 'youtube' | 'instagram';
+  velocity: number;
+  category: string;
+}
+
+export interface GeneratedTopic {
+  topic: string;
+  source: 'trend' | 'manual';
+  score: number;
 }
 
 // ─── HOOK TYPES ─────────────────────────────────────────────
@@ -129,6 +143,14 @@ export interface ScriptGenerationRequest {
   keyPoints?: string[];
   voiceLanguage?: string;
   researchBrief?: string;
+  trendContext?: TrendContext;
+}
+
+export interface TrendContext {
+  platform: 'youtube' | 'instagram';
+  velocity: number;
+  category: string;
+  trendLabel: string;
 }
 
 export interface ScriptGenerationResult {
@@ -244,6 +266,12 @@ export interface PipelineResult {
   totalTimeMs: number;
   stagesCompleted: PipelineStage[];
   error?: PipelineError;
+}
+
+export interface PerformanceSignal {
+  retention: number;
+  avgWatchTime: number;
+  trendMatchScore: number;
 }
 
 // ─── ERROR TYPES ────────────────────────────────────────────

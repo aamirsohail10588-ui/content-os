@@ -12,6 +12,7 @@ import { getRegistryStats } from './registry/contentRegistry';
 import { ContentConfig, VideoFormat } from './types';
 import { SYSTEM_CONFIG } from './config';
 import { createLogger } from './infra/logger';
+import { runTrendAwarePipeline } from './pipeline/runTrendAwarePipeline';
 
 // Phase 4 engines — singletons from core/engines.ts
 import { decisionEngine, evolutionEngine, experimentEngine, portfolioEngine, HOOK_AB_EXPERIMENT } from './core/engines';
@@ -49,6 +50,25 @@ async function main(): Promise<void> {
     aiProvider: 'claude',
     maxVariants: 3,
   };
+
+  // ══════════════════════════════════════════════════════════
+  // TREND INTELLIGENCE ENTRY
+  // ══════════════════════════════════════════════════════════
+
+  header('TREND LAYER: Scan → Topic Generation → Full Pipeline');
+  const trendAware = await runTrendAwarePipeline(config, { topicLimit: 2, minTopicScore: 0.56 });
+  console.log(`\nTrend scan time: ${trendAware.scannedAt}`);
+  console.log(`Selected topics: ${trendAware.selectedTopics.length}`);
+  trendAware.selectedTopics.forEach((t, idx) => {
+    console.log(`  ${idx + 1}. ${t.topic} [${t.source}] score=${t.score}`);
+  });
+  console.log(`Rejected topics: ${trendAware.rejectedTopics}`);
+  if (trendAware.failurePatterns.length > 0) {
+    console.log('\nFailure patterns detected:');
+    trendAware.failurePatterns.forEach(p => console.log(`  - ${p}`));
+  }
+  console.log('\nRecommended system adjustments:');
+  trendAware.adjustments.forEach(a => console.log(`  - ${a}`));
 
   // ══════════════════════════════════════════════════════════
   // PHASE 1–2: GENERATE VIDEOS

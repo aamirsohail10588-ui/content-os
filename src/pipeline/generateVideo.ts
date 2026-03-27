@@ -20,6 +20,7 @@ import {
   Script,
   VideoAssemblyResult,
   ContentFingerprint,
+  TrendContext,
 } from '../types';
 import { PIPELINE_CONFIG, DEFAULT_CONTENT_CONFIG } from '../config';
 import { generateHooks, selectBestHook } from '../modules/hookEngine';
@@ -144,7 +145,8 @@ async function executeStage<T>(
 
 export async function generateVideo(
   topic: string,
-  config: ContentConfig = DEFAULT_CONTENT_CONFIG
+  config: ContentConfig = DEFAULT_CONTENT_CONFIG,
+  options?: { trendContext?: TrendContext }
 ): Promise<PipelineResult> {
   const jobId = uuidv4();
   const startTime = Date.now();
@@ -238,6 +240,7 @@ export async function generateVideo(
         targetDurationSeconds: config.targetDurationSeconds,
         voiceLanguage: (config as any).voiceLanguage || 'english',
         researchBrief,
+        trendContext: options?.trendContext,
       });
 
       await saveCheckpoint(jobId, PipelineStage.SCRIPT_GENERATION, {
